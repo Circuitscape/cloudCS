@@ -4,11 +4,11 @@
 		<meta charset="utf-8">
 		<meta http-equiv="X-UA-Compatible" content="IE=edge">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<meta name="description" content="Circuitscape 4.0.0-beta">
+		<meta name="description" content="Circuitscape {{version}}">
 		<meta name="author" content="tan">
 		<link rel="shortcut icon" href="cs_logo.ico">
 
-		<title>Circuitscape 4.0.0-beta</title>
+		<title>Circuitscape {{version}}</title>
 
 		<link href="ext/bootstrap/css/bootstrap.css" rel="stylesheet">
 
@@ -35,20 +35,23 @@
 					</div>
 					<div class="collapse navbar-collapse">
 						<ul class="nav navbar-nav">
-							<span style="color: gray;"><small>4.0.0-beta</small></span>
+							<span style="color: gray;"><small>{{version}}</small></span>
 						</ul>
 						<ul class="nav navbar-nav navbar-right">
+							<li>
+								<span class="navbar-text">Welcome {{username}}&nbsp;|&nbsp;&nbsp;</span>
+							</li>
 							<li class="dropdown">
 								<a href="#" class="dropdown-toggle" data-toggle="dropdown"><span class="glyphicon glyphicon-cog"></span><b class="caret"></b></a>
 								<ul class="dropdown-menu">
 									<li>
-										<a href="#">Load from last run</a>
+										<a href="#" id="menu_load_last">Load from last run</a>
 									</li>
 									<li>
-										<a href="#">Load from file</a>
+										<a href="#" id="menu_load_from_file">Load from file</a>
 									</li>
 									<li>
-										<a href="#">Save to file</a>
+										<a href="#" id="menu_save_to_file">Save to file</a>
 									</li>
 									<li class="divider"></li>
 									<li>
@@ -56,12 +59,12 @@
 									</li>
 									<li class="divider"></li>
 									<li>
-										<a href="#">Verify Installation</a>
+										<a href="#" id="menu_verify">Verify Installation</a>
 									</li>
 								</ul>
 							</li>
 							<li>
-								<a href="#"><span class="glyphicon glyphicon-log-out"></span></a>
+								<a href="#" id="shutdown"><span class="glyphicon glyphicon-log-out"></span></a>
 							</li>
 						</ul>
 					</div><!--/.nav-collapse -->					
@@ -161,8 +164,8 @@
 									<div class="col-sm-10 controls">
 										<span class="input-group" style="max-width: 700px">
 											<select class="form-control" name="cell_conn_type" id="cell_conn_type">
-												<option value="">Four Neighbors</option>
 												<option value="">Eight Neighbors</option>
+												<option value="">Four Neighbors</option>
 											</select>
 											<span class="input-group-addon">&nbsp;&nbsp;with&nbsp;&nbsp;</span> 
 											<select class="form-control" name="cell_calc_type" id="cell_calc_type">
@@ -368,8 +371,59 @@
 		<div id="footer">
 			<div class="container">
 				<p class="text-muted credit">
-					<a href="http://circuitscape.org">Circuitscape (C) 2008-14. Ver. 4.0.0 beta.</a>.
+					<a href="http://circuitscape.org">Circuitscape (C) 2008-14. Ver. {{version}}</a>.
 				</p>
+			</div>
+		</div>
+
+		<div class="modal fade" id="verify_div">
+			<div class="modal-dialog" style="width: 90%;">
+				<div class="modal-content">
+					<div class="modal-header">
+						<!--a class="close" data-dismiss="modal">&times;</a-->
+						<h3 id="logout_div_title">Running Verifications...</h3>
+					</div>
+					<div class="modal-body">
+						<div class="well">
+							<div class="row">
+								<div class="col-sm-11" style="padding-top: 10px">
+									<div class="progress progress-striped">
+									  <div class="progress-bar progress-bar-success" role="progressbar" aria-valuenow="40" aria-valuemin="0" aria-valuemax="100" style="width: 40%">
+									    <span class="sr-only">40% Complete (success)</span>
+									  </div>
+									</div>
+								</div>
+							</div>
+							<div class="row">
+								<div class="col-sm-12" style="text-transform: uppercase; color: #BBBBBB; font-weight: bold; font-size: 12px; letter-spacing: 1px;">
+									Execution Logs<br />
+									<textarea id="verify_div_msg" class="form-control" rows="10"></textarea>
+								</div>
+							</div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<a id="verify_div_close" href="#" class="btn btn-primary" data-dismiss="modal">Close</a>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="logout_div">
+			<div class="modal-dialog">
+				<div class="modal-content">
+					<div class="modal-header">
+						<a class="close" data-dismiss="modal">&times;</a>
+						<h3 id="logout_div_title">Shutdown</h3>
+					</div>
+					<div class="modal-body">
+						Are you sure you want to close Circuitscape?
+					</div>
+					<div class="modal-footer">
+						<a href="#" class="btn btn-primary" data-dismiss="modal" onclick="logoff();">Yes</a>
+						<a href="#" class="btn btn-primary" data-dismiss="modal">Cancel</a>
+					</div>
+				</div>
 			</div>
 		</div>
 
@@ -385,7 +439,6 @@
 						<ul id="filedlg_div_files"> </ul>
 					</div>
 					<div class="modal-footer">
-						<a href="#" class="btn btn-primary" data-dismiss="modal">Select</a>
 						<a href="#" class="btn btn-primary" data-dismiss="modal">Close</a>
 					</div>
 				</div>
@@ -402,7 +455,7 @@
 					<div class="modal-body">
 						<img src="static/cs_logo.jpg" class="pull-left" style="margin-right: 10px"/>
 						<p>
-							Version 4.0.0-beta
+							Version {{version}}
 							<br>
 							<a href="http://www.circuitscape.org/">http://www.circuitscape.org/</a>
 							<br/>
@@ -413,7 +466,7 @@
 							effects of all possible pathways across a landscape simultaneously.
 							<br/>
 							<br/>
-							Circuitscape (C) 2013, Brad McRae, Viral B. Shah. and Tanmay Mohapatra
+							Circuitscape (C) 2013, {{author}}
 							<br/>
 							Licensed under LGPL.
 						</p>
@@ -432,124 +485,11 @@
 		<script src="ext/jquery-1.10.2.js" type="text/javascript"></script>
 		<script src="ext/bootstrap/js/bootstrap.min.js" type="text/javascript"></script>
 		<script src="static/bootstrap-spinedit.js" type="text/javascript"></script>
+		<script src="static/script.js" type="text/javascript"></script>
 	
 		<script type="text/javascript">
-			var file_dlg_result_target = '';
-			var file_dlg_conn;
-			var file_dlg_cwd = '';
-			var file_dlg_headers = {
-				'habitat_file_select': "Choose a Habitat Map",
-				'habitat_mask_file_select': "Choose a Habitat Mask",
-				'short_circuit_file_select': "Choose a Short Circuit Map",
-				'focal_nodes_file_select': "Choose a Focal Node Map",
-				'incl_excl_file_select': "Choose an Include/Exclude Nodes File",
-				'src_strength_file_select': "Choose a file with source strengths",
-				'current_sources_file_select': "Choose a file with current sources",
-				'ground_points_file_select': "Choose a file with ground points",
-			};
-			
-			function file_dlg_list(dir) {
-				data = {};
-				if(file_dlg_cwd.length > 0) {
-					data['cwd'] = file_dlg_cwd;
-				}
-				if(dir) {
-					data['dir'] = dir;
-				}
-				file_dlg_conn.send(JSON.stringify({
-					'msg_type': 1,
-					'data': data
-				}));				
-			};
-			
-			function file_dlg_init(target_id) {
-				file_dlg_result_target = target_id.substring(0, target_id.lastIndexOf('_'));
-				$('#'+file_dlg_result_target).val('');
-				$('#filedlg_div_title').html(file_dlg_headers[target_id]);
-				$('#filedlg_div').modal('show');
-				$('#filedlg_div').on('hidden.bs.modal', function() {
-					if(file_dlg_conn) {
-						file_dlg_conn.close();						
-					}
-				});
-
-				file_dlg_conn = new WebSocket('ws://localhost:8080/websocket');
-				file_dlg_conn.onopen = function() {
-					file_dlg_list();
-				};
-				file_dlg_conn.onmessage = function(evt) {
-					resp = JSON.parse(evt.data);
-					if (resp.msg_type == 2) {
-						file_dlg_cwd = resp.data.dir;
-						$('#filedlg_div_dir').html(file_dlg_cwd);
-						files_html = "";
-						for(idx=0; idx < resp.data.filelist.length; idx++) {
-							filename = resp.data.filelist[idx][0];
-							is_dir = resp.data.filelist[idx][1];
-							files_html += ("<li class=\"" + (is_dir ? "filedlg_dir" : "filedlg_file") + "\">" + filename + "</li>"); 
-						}
-						$('#filedlg_div_files').html(files_html);
-						$('.filedlg_dir').click(function(e){
-							file_dlg_list($(this).html());
-						});
-						$('.filedlg_file').click(function(e){
-							sel_file = $(this).html();
-							sel_file = file_dlg_cwd + "/" + sel_file;
-							$('#'+file_dlg_result_target).val(sel_file);
-							$('#filedlg_div').modal('hide');
-						});
-					}
-				};
-			};
-			
-			function select_input_format(selVal) {
-				if(selVal == 'raster') {
-					$('.on_raster').show();
-					$('.on_network').hide();
-				}
-				else {
-					$('.on_raster').hide();
-					$('.on_network').show();
-				}
-			};
-			
-			function select_modeling_mode(selVal) {
-				$('.on_modeling_mode').hide();
-				$('.on_modeling_mode').filter($('.on_'+selVal)).show();
-			};
-			
 			$(document).ready(function() {
-				$('input[id=habitat_file_hidden]').change(function() {
-					$('#habitat_file').val($(this).val());
-				});
-				$('#input_tabs').tab();
-				$('#input_tabs a').click(function(e) {
-					e.preventDefault();
-					$(this).tab('show');
-				});
-				$('.server_file_dlg').click(function(e){
-					file_dlg_init(e.target.id);
-				});
-				
-				$('#num_parallel_procs').spinedit({
-					minimum: 1,
-					maximum: 10,
-					step: 1,
-					value: 1,
-					numberOfDecimals: 0
-				});
-				
-				select_modeling_mode('pairwise');
-				$('#modeling_mode input:radio').change(function() {
-					var selVal = $("#modeling_mode input:radio:checked").val();
-					select_modeling_mode(selVal);
-				});
-				
-				select_input_format('raster');
-				$('#input_format input:radio').change(function() {
-					var selVal = $("#input_format input:radio:checked").val();
-					select_input_format(selVal);
-				});				
+				init_circuitscape('{{ws_url}}');
 			});
 		</script>
 	</body>
