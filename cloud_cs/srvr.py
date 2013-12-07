@@ -1,5 +1,6 @@
-import sys, os, webbrowser, json, logging, getpass, tempfile
+import sys, os, webbrowser, json, logging, getpass, tempfile, StringIO
 from circuitscape.compute import Compute
+from circuitscape.cfg import CSConfig
 from circuitscape import __version__ as cs_version
 from circuitscape import __author__ as cs_author
 from circuitscape import __file__ as cs_pkg_file
@@ -23,8 +24,12 @@ def stop_webserver():
     ioloop.add_callback(lambda x: x.stop(), ioloop)
 
 def run_webserver(ws_app, port, start_browser):
+    global SERVER_WS_URL, SERVER_PORT
+    SERVER_PORT = port
+    
     server = tornado.httpserver.HTTPServer(ws_app)
     server.listen(port)
+    SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(port) + SERVER_WS_PATH
     if start_browser:
         webbrowser.open('http://localhost:' + str(port) + '/')
     tornado.ioloop.IOLoop.instance().start()
@@ -43,6 +48,9 @@ class WebSocketLogger(logging.Handler):
         msg = self.format(record)
         msg = msg.strip('\r')
         msg = msg.strip('\n')
+        self.send_log_msg(msg)
+
+    def send_log_msg(self, msg):
         resp_nv = {
                    'msg_type': WSMsg.SHOW_LOG,
                    'data': msg
@@ -63,6 +71,11 @@ class WSMsg:
     REQ_RUN_VERIFY = 5
     RSP_RUN_VERIFY = 6
     
+    REQ_RUN_JOB = 7
+    RSP_RUN_JOB = 8
+    
+    REQ_LOAD_CFG = 9
+    RSP_LOAD_CFG = 10
     
     def __init__(self, msg_type=None, msg_nv=None, msg=None):
         if msg:
@@ -76,6 +89,9 @@ class WSMsg:
 
     def msg_type(self):
         return self.nv['msg_type']
+
+    def data_keys(self):
+        return self.nv['data'].keys()
 
     def data(self, key, default=None):
         return self.nv['data'].get(key, default);
@@ -119,18 +135,68 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 response, is_shutdown_msg = self.handle_logout(wsmsg)
             elif (wsmsg.msg_type() == WSMsg.REQ_RUN_VERIFY):
                 response, is_shutdown_msg = self.handle_run_verify(wsmsg)
+            elif (wsmsg.msg_type() == WSMsg.REQ_RUN_JOB):
+                response, is_shutdown_msg = self.handle_run_job(wsmsg)
+            elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
+                response, is_shutdown_msg = self.handle_load_config(wsmsg)
                 
             wsmsg.reply(response, self)
-        except Exception as e:
-            logger.exception("Exception handling message of type %s"%(wsmsg.msg_type(),), e)
+        except Exception:
+            logger.exception("Exception handling message of type %d"%(wsmsg.msg_type(),))
             wsmsg.error(-1, self)
             
         if is_shutdown_msg:
             stop_webserver()
 
+    def handle_load_config(self, wsmsg):
+        result = None
+        success = False
+        try:
+            filepath = wsmsg.data('filename')
+            filedir, _filename = os.path.split(filepath)
+            cfg = CSConfig(filepath)
+            result = cfg.as_dict(rel_to_abs=filedir)
+            success = True
+        except Exception as e:
+            logger.exception("Error reading configuration from %s"%(wsmsg.data('filename'),))
+            result = str(e)
+        logger.debug("returning config [" + str(result) + "]")
+        return ({'cfg': result, 'success': success}, False)
+
+    def handle_run_job(self, wsmsg):
+        solver_failed = True
+        
+        cfg = CSConfig()
+        for key in wsmsg.data_keys():
+            cfg.__setattr__(key, wsmsg.data(key))
+        (all_options_entered, message) = cfg.check()
+        if not all_options_entered:
+            wsmsg.error(message, self)
+        else:
+            # TODO: In cloud mode, this would be a temporary directory
+            outdir, _out_file = os.path.split(cfg.output_file)
+            
+            try:
+                configFile = os.path.join(outdir, 'circuitscape.ini')
+                cfg.write(configFile)
+    
+                wslogger = WebSocketLogger(self)
+                cs = Compute(configFile, wslogger)
+                result, solver_failed = cs.compute()
+                wslogger.send_log_msg("result: \n" + str(result))
+            except Exception as e:
+                message = str(e)
+                wsmsg.error(message, self)
+
+        success = not solver_failed
+        return ({'complete': True, 'success': success}, False)
+            
+        
+
     def handle_run_verify(self, wsmsg):
         outdir = None
         cwd = os.getcwd()
+        strio = StringIO.StringIO()
         try:
             root_path = os.path.dirname(cs_pkg_file)
             outdir = tempfile.mkdtemp()
@@ -139,7 +205,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 os.chdir(root_path)     # otherwise we are running inside a packaged folder and resources are availale at cwd
             wslogger = WebSocketLogger(self)
             from circuitscape.verify import cs_verifyall
-            testResult = cs_verifyall(out_path=outdir, ext_logger=wslogger)
+            testResult = cs_verifyall(out_path=outdir, ext_logger=wslogger, stream=strio)
             testsPassed = testResult.wasSuccessful()
         except:
             testsPassed = False
@@ -152,6 +218,9 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                     for name in dirs:
                         os.rmdir(os.path.join(root, name))
                 os.rmdir(outdir)
+
+        wslogger.send_log_msg(strio.getvalue())
+        strio.close()
                 
         return ({'complete': True, 'success': testsPassed}, False)
     
@@ -197,9 +266,6 @@ class Application(tornado.web.Application):
         }
         tornado.web.Application.__init__(self, handlers, **settings)
 
-
-if __name__ == '__main__':
+def run_webgui(port=SERVER_PORT, start_browser=True):
     logger.debug('starting up...')
-    run_webserver(Application(), SERVER_PORT, False)
-
-
+    run_webserver(Application(), port, start_browser)

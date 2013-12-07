@@ -1,4 +1,27 @@
+// TODO: encapsulate to avoid polluting global namespace
+
 var cs_ws_url = '';
+
+// TODO: generate from server side code
+var ws_msg_types = {
+	'RSP_ERROR': -1,
+    'SHOW_LOG': 0,
+    
+    'REQ_FILE_LIST': 1,
+    'RSP_FILE_LIST': 2,
+    
+    'REQ_LOGOUT': 3,
+    'RSP_LOGOUT': 4,
+    
+    'REQ_RUN_VERIFY': 5,
+    'RSP_RUN_VERIFY': 6,
+    
+    'REQ_RUN_JOB': 7,
+    'RSP_RUN_JOB': 8,
+    
+    'REQ_LOAD_CFG': 9,
+    'RSP_LOAD_CFG': 10,
+};
 
 function do_ws(onopen, onmessage) {
 	ws_conn = new WebSocket(cs_ws_url);
@@ -12,14 +35,16 @@ var file_dlg_conn;
 var file_dlg_cwd = '';
 
 var file_dlg_headers = {
-	'habitat_file_select': "Choose a Habitat Map",
-	'habitat_mask_file_select': "Choose a Habitat Mask",
-	'short_circuit_file_select': "Choose a Short Circuit Map",
-	'focal_nodes_file_select': "Choose a Focal Node Map",
-	'incl_excl_file_select': "Choose an Include/Exclude Nodes File",
-	'src_strength_file_select': "Choose a file with source strengths",
-	'current_sources_file_select': "Choose a file with current sources",
-	'ground_points_file_select': "Choose a file with ground points",
+	'habitat_file_select': "Choose Habitat Map File",
+	'habitat_mask_file_select': "Choose Habitat Mask File",
+	'short_circuit_file_select': "Choose Short Circuit File",
+	'focal_nodes_file_select': "Choose Focal Node File",
+	'incl_excl_file_select': "Choose Include/Exclude Nodes File",
+	'src_strength_file_select': "Choose Source Strengths File",
+	'current_sources_file_select': "Choose Current Sources File",
+	'ground_points_file_select': "Choose Ground Points File",
+	'output_file_select': "Choose Output File",
+	'menu_load_file_select': "Choose a Configuration File"
 };
 
 function file_dlg_list(dir) {
@@ -31,7 +56,7 @@ function file_dlg_list(dir) {
 		data['dir'] = dir;
 	}
 	file_dlg_conn.send(JSON.stringify({
-		'msg_type': 1,
+		'msg_type': ws_msg_types.REQ_FILE_LIST,
 		'data': data
 	}));				
 };
@@ -39,6 +64,7 @@ function file_dlg_list(dir) {
 function file_dlg_init(target_id) {
 	file_dlg_result_target = target_id.substring(0, target_id.lastIndexOf('_'));
 	$('#'+file_dlg_result_target).val('');
+	$('#filedlg_filename').val('');
 	$('#filedlg_div_title').html(file_dlg_headers[target_id]);
 	$('#filedlg_div').modal('show');
 	$('#filedlg_div').on('hidden.bs.modal', function() {
@@ -47,10 +73,12 @@ function file_dlg_init(target_id) {
 		}
 	});
 
-	file_dlg_conn = do_ws(file_dlg_list, 
+	file_dlg_conn = do_ws(function(evt){
+			file_dlg_list();
+		}, 
 		function(evt) {
 			resp = JSON.parse(evt.data);
-			if (resp.msg_type == 2) {
+			if (resp.msg_type == ws_msg_types.RSP_FILE_LIST) {
 				file_dlg_cwd = resp.data.dir;
 				$('#filedlg_div_dir').html(file_dlg_cwd);
 				files_html = "";
@@ -65,9 +93,7 @@ function file_dlg_init(target_id) {
 				});
 				$('.filedlg_file').click(function(e){
 					sel_file = $(this).html();
-					sel_file = file_dlg_cwd + "/" + sel_file;
-					$('#'+file_dlg_result_target).val(sel_file);
-					$('#filedlg_div').modal('hide');
+					$('#filedlg_filename').val(sel_file);
 				});
 			}
 		});
@@ -92,46 +118,276 @@ function select_modeling_mode(selVal) {
 function logoff() {
 	do_ws(function() {
 			ws_conn.send(JSON.stringify({
-				'msg_type': 3,
+				'msg_type': ws_msg_types.REQ_LOGOUT,
 				'data': ""
 			}));
 		},
 		function(evt) {
 			resp = JSON.parse(evt.data);
-			if (resp.msg_type == 4) {
+			if (resp.msg_type == ws_msg_types.RSP_LOGOUT) {
 				ws_conn.close();
 				$('body').html('<p></p>');
 			}
 		});
 };
 
+function get_form_field(fld_name, fld_type) {
+	selector = '#' + fld_name;
+	if(fld_type=='radio') {
+		selector = 'input[name=' + fld_name + ']:radio:checked';			
+	}
+	return (fld_type == 'checkbox') ? $(selector).is(':checked') : $.trim($(selector).val());		
+};
+
+function set_form_field(fld_name, fld_val, fld_type) {
+	if(get_form_field(fld_name, fld_type) == fld_val) {
+		return;
+	}
+	selector = '#' + fld_name;
+	if(fld_type=='radio') {
+		selector = "input[name=" + fld_name + "]";
+		$(selector).filter("[value='"+fld_val+"']").click();
+		//$(selector).filter("[value='"+fld_val+"']").attr("checked","checked");
+	}
+	else if(fld_type == 'checkbox') {
+		if(fld_val) {
+			$(selector).attr('checked', 'checked');			
+		}
+		else {
+			$(selector).removeAttr('checked');
+		}
+		//$(selector).click();
+	}
+	else {
+		$(selector).val(fld_val);
+		$(selector).change();			
+	}
+};
+
+function load_cfg(filename) {
+	do_ws(function() {
+			ws_conn.send(JSON.stringify({
+				'msg_type': ws_msg_types.REQ_LOAD_CFG,
+				'data': {'filename': filename}
+			}));
+		},
+		function(evt) {
+			resp = JSON.parse(evt.data);
+			if (resp.msg_type == ws_msg_types.RSP_LOAD_CFG) {
+				if(resp.data.success) {
+					alert_in_page('Loaded configuration from ' + filename, 'success');
+					populate_config(resp.data.cfg);
+				}
+				else {
+					alert_in_page(resp.data.cfg, 'danger');
+				}
+				ws_conn.close();
+			}
+		});	
+};
+
+function populate_config(cfg) {
+	set_form_field('input_type', cfg.data_type, 'radio');
+	select_input_format(cfg.data_type);		
+
+	set_form_field('radio_modeling_mode', cfg.scenario, 'radio');
+	select_modeling_mode(cfg.scenario);
+	
+	if(cfg.data_type == 'raster') {
+		set_form_field('cell_conn_type', cfg.connect_four_neighbors_only ? 4 : 8);
+		set_form_field('cell_calc_type', cfg.connect_using_avg_resistances ? 'R' : 'C');
+		set_form_field('short_circuit_file', cfg.use_polygons ? cfg.polygon_file : ''); 
+	}
+	set_form_field('habitat_file', cfg.habitat_file);
+	set_form_field('habitat_data_type', cfg.habitat_map_is_resistances ? 'R' : 'C');
+	set_form_field('habitat_mask_file', cfg.use_mask ? cfg.mask_file : '');
+
+	if(cfg.scenario == 'advanced') {
+		set_form_field('current_sources_file', cfg.source_file);
+		set_form_field('ground_points_file', cfg.ground_file);
+		set_form_field('ground_value_type', cfg.ground_file_is_resistances ? 'R':'C');
+		set_form_field('use_unit_currents', cfg.use_unit_currents, 'checkbox');
+		set_form_field('chk_use_direct_grounds', cfg.use_direct_grounds, 'checkbox');
+		set_form_field('rmv_on_conflict', cfg.remove_src_or_gnd);
+	}
+	
+	if((cfg.scenario == 'one-to-all') || (cfg.scenario == 'all-to-one')) {
+		set_form_field('src_strength_file', cfg.use_variable_source_strengths ? cfg.variable_source_file : '');
+	}
+
+	if((cfg.scenario != 'advanced')) {
+		set_form_field('focal_nodes_file', cfg.point_file);
+		
+		set_form_field('incl_excl_file', cfg.use_included_pairs ? cfg.included_pairs_file : '');
+		set_form_field('write_cum_cur_map_only', cfg.write_cum_cur_map_only, 'checkbox');
+		set_form_field('write_max_cur_maps', cfg.write_max_cur_maps, 'checkbox');
+	}
+	
+	if(cfg.scenario == 'pairwise') {
+		num_parallel_procs = set_form_field('num_parallel_procs', cfg.parallelize ? cfg.max_parallel : '1');
+		set_form_field('low_memory_mode', cfg.low_memory_mode, 'checkbox');
+	}
+	set_form_field('preemptive_memory_release', cfg.preemptive_memory_release, 'checkbox');
+	set_form_field('print_timings', cfg.print_timings, 'checkbox');
+	set_form_field('print_rusages', cfg.print_rusages, 'checkbox');
+	set_form_field('log_level', cfg.log_level);
+	set_form_field('log_transform_maps', cfg.log_transform_maps, 'checkbox');
+	set_form_field('compress_grids', cfg.compress_grids, 'checkbox');
+	set_form_field('write_volt_maps', cfg.write_volt_maps, 'checkbox');
+	set_form_field('write_cur_maps', cfg.write_cur_maps, 'checkbox');
+	set_form_field('output_file', cfg.output_file);
+}
+
+function run_job() {
+	cfg = {};
+	cfg.data_type = get_form_field('input_type', 'radio');
+	cfg.scenario = get_form_field('radio_modeling_mode', 'radio');
+	
+	if(cfg.data_type == 'raster') {
+		cfg.connect_four_neighbors_only = (get_form_field('cell_conn_type') == 4);
+		cfg.connect_using_avg_resistances = (get_form_field('cell_calc_type') == 'R');
+		
+		filename = get_form_field('short_circuit_file');
+		if(filename.length > 0) {
+			cfg.use_polygons = true;
+			cfg.polygon_file = filename;
+		}
+	}
+
+	filename = 	get_form_field('habitat_file');
+    if(filename.length > 0) {
+    	cfg.habitat_file = filename;
+    	cfg.habitat_map_is_resistances = (get_form_field('habitat_data_type') == 'R');
+    }
+
+	filename = 	get_form_field('habitat_mask_file');
+	if(filename.length > 0) {
+		cfg.mask_file = filename; 
+		cfg.use_mask = true;
+	}
+	
+	if(cfg.scenario == 'advanced') {
+		filename = 	get_form_field('current_sources_file');
+		if(filename.length > 0) cfg.source_file = filename;
+
+		filename = 	get_form_field('ground_points_file');
+		if(filename.length > 0) cfg.ground_file = filename;
+		
+		cfg.ground_file_is_resistances = (get_form_field('ground_value_type') == 'R');
+		cfg.use_unit_currents = get_form_field('use_unit_currents', 'checkbox');
+		cfg.use_direct_grounds = get_form_field('chk_use_direct_grounds', 'checkbox');
+		cfg.remove_src_or_gnd = get_form_field('rmv_on_conflict');
+	}
+	
+	if((cfg.scenario == 'one-to-all') || (cfg.scenario == 'all-to-one')) {
+		filename = 	get_form_field('src_strength_file');
+		if(filename.length > 0) {
+        	cfg.use_variable_source_strengths = true; 
+            cfg.variable_source_file = filename;
+		}
+	}
+
+	if((cfg.scenario != 'advanced')) {
+		filename = 	get_form_field('focal_nodes_file');
+		if(filename.length > 0) {
+			cfg.point_file = filename;
+		}
+		
+		filename = get_form_field('incl_excl_file');
+		if(filename.length > 0) {
+			cfg.use_included_pairs = true;
+			cfg.included_pairs_file = filename;
+		}
+		cfg.write_cum_cur_map_only = get_form_field('write_cum_cur_map_only', 'checkbox');
+		cfg.write_max_cur_maps = get_form_field('write_max_cur_maps', 'checkbox');
+	}
+	
+	if(cfg.scenario == 'pairwise') {
+		num_parallel_procs = get_form_field('num_parallel_procs');
+		if(num_parallel_procs > 1) {
+			cfg.parallelize = true;
+			cfg.max_parallel = parseInt(num_parallel_procs);
+		}
+		cfg.low_memory_mode = get_form_field('low_memory_mode', 'checkbox');
+	}
+	cfg.preemptive_memory_release = get_form_field('preemptive_memory_release', 'checkbox');
+	cfg.print_timings = get_form_field('print_timings', 'checkbox');
+	cfg.print_rusages = get_form_field('print_rusages', 'checkbox');
+	cfg.log_level = get_form_field('log_level');
+	cfg.log_transform_maps = get_form_field('log_transform_maps', 'checkbox');
+	cfg.compress_grids = get_form_field('compress_grids', 'checkbox');
+	cfg.write_volt_maps = get_form_field('write_volt_maps', 'checkbox');
+	cfg.write_cur_maps = get_form_field('write_cur_maps', 'checkbox');
+	cfg.output_file = get_form_field('output_file');
+	
+	do_ws(function() {
+			$('#results_div').modal({ backdrop: 'static', keyboard: false });
+			$('#results_div_title').html('Running...');
+			$('#results_div_msg').val('');
+			$('#results_div').modal('show');
+			$('#results_div_close').attr('disabled', 'disabled');
+			ws_conn.send(JSON.stringify({
+				'msg_type': ws_msg_types.REQ_RUN_JOB,
+				'data': cfg
+			}));
+		},
+		function(evt) {
+			resp = JSON.parse(evt.data);
+			if (resp.msg_type == ws_msg_types.RSP_RUN_JOB) {
+				$('#results_div_msg').val((resp.data.success ? 'Success' : 'Failed') + '.\n' + $('#results_div_msg').val());
+				ws_conn.close();
+				$('#results_div_close').removeAttr('disabled');
+			}
+			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
+				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
+			}
+			else if(resp.msg_type == ws_msg_types.RSP_ERROR) {
+				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
+			}
+		});	
+};
+
 function run_verify() {
 	do_ws(function() {
-			$('#verify_div').modal({ backdrop: 'static', keyboard: false });
-			$('#verify_div_msg').val('');
-			$('#verify_div').modal('show');
-			$('#verify_div_close').attr('disabled', 'disabled');
+			$('#results_div').modal({ backdrop: 'static', keyboard: false });
+			$('#results_div_title').html('Running Verifications...');
+			$('#results_div_msg').val('');
+			$('#results_div').modal('show');
+			$('#results_div_close').attr('disabled', 'disabled');
 			ws_conn.send(JSON.stringify({
-				'msg_type': 5,
+				'msg_type': ws_msg_types.REQ_RUN_VERIFY,
 				'data': ""
 			}));
 		},
 		function(evt) {
 			resp = JSON.parse(evt.data);
-			if (resp.msg_type == 6) {
-				alert("complete=" + resp.data.complete);
-				alert("success=" + resp.data.success);
+			if (resp.msg_type == ws_msg_types.RSP_RUN_VERIFY) {
+				if(resp.data.success) {
+					$('#results_div_msg').val('All tests passed.\n' + $('#results_div_msg').val());
+				}
 				ws_conn.close();
-				$('#verify_div_close').removeAttr('disabled');
+				$('#results_div_close').removeAttr('disabled');
 			}
-			else if(resp.msg_type == 0) {
-				$('#verify_div_msg').val(resp.data + '\n' + $('#verify_div_msg').val());
+			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
+				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
 			}
 		});	
 };
 
+function alert_in_page(msg, level) {
+	$('#in_page_alert_msg').html(msg);
+	$('#in_page_alert').removeClass("alert-success alert-info alert-warning alert-danger");
+	$('#in_page_alert').addClass("alert-"+level);
+	$('#in_page_alert').show();
+};
+
 function init_circuitscape(ws_url) {
 	cs_ws_url = ws_url;
+	$('#in_page_alert').hide();
+	$('#menu_load_file').hide();
+	$('#menu_load_file').change(function(){
+		load_cfg($('#menu_load_file').val());
+	});
 	$('input[id=habitat_file_hidden]').change(function() {
 		$('#habitat_file').val($(this).val());
 	});
@@ -143,7 +399,13 @@ function init_circuitscape(ws_url) {
 	$('.server_file_dlg').click(function(e){
 		file_dlg_init(e.target.id);
 	});
-	
+	$('#btn_filedlg_div_sel').click(function(e){
+		sel_file = file_dlg_cwd + "/" + $('#filedlg_filename').val();
+		$('#'+file_dlg_result_target).val(sel_file);
+		$('#'+file_dlg_result_target).change();
+		$('#filedlg_div').modal('hide');		
+	});
+
 	$('#num_parallel_procs').spinedit({
 		minimum: 1,
 		maximum: 10,
@@ -170,5 +432,9 @@ function init_circuitscape(ws_url) {
 	
 	$('#menu_verify').click(function(e){
 		run_verify();
+	});
+	
+	$('#btn_run').click(function(e){
+		run_job();
 	});
 };
