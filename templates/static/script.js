@@ -1,11 +1,15 @@
 // TODO: encapsulate to avoid polluting global namespace
 
 var cs_ws_url = '';
+var cs_session = '';
 
 // TODO: generate from server side code
 var ws_msg_types = {
 	'RSP_ERROR': -1,
     'SHOW_LOG': 0,
+    
+    'REQ_AUTH': 1000,
+    'RSP_AUTH': 1001,
     
     'REQ_FILE_LIST': 1,
     'RSP_FILE_LIST': 2,
@@ -23,15 +27,61 @@ var ws_msg_types = {
     'RSP_LOAD_CFG': 10,
 };
 
+var ws_conn_authenticated = false;
+var ws_conn = null;
+var ws_conn_onopen = null;
+var ws_conn_onmessage = null;
+
 function do_ws(onopen, onmessage) {
-	ws_conn = new WebSocket(cs_ws_url);
-	ws_conn.onopen = onopen;
-	ws_conn.onmessage = onmessage;
-	return ws_conn;
+	ws_conn_onopen = onopen;
+	ws_conn_onmessage = onmessage;
+	
+	if(cs_session != '') {
+		if(null == ws_conn) {
+			var ws_conn_authenticated = false;
+			ws_conn = new WebSocket(cs_ws_url);
+			ws_conn.onopen = function(evt) {
+				ws_conn.send(JSON.stringify({
+					'msg_type': ws_msg_types.REQ_AUTH,
+					'data': {'sess_id': cs_session}
+				}));
+			};
+			
+			ws_conn.onclose = function(evt) {
+				ws_conn = ws_conn_onopen = ws_conn_onmessage = null;
+				ws_conn_authenticated = false;
+			};
+			
+			ws_conn.onmessage = function(evt) {
+				resp = JSON.parse(evt.data);
+				if(ws_conn_authenticated) {
+					if(null != ws_conn_onmessage) ws_conn_onmessage(resp);
+				}
+				else {
+					if (resp.msg_type == ws_msg_types.RSP_AUTH) {
+						ws_conn_authenticated = resp.data.success;
+						if(ws_conn_authenticated && (null != ws_conn_onopen)) ws_conn_onopen();
+					}
+				}
+			};
+		}
+		else {
+			ws_conn_onopen();
+		}
+	}
+	else {
+		ws_conn = new WebSocket(cs_ws_url);
+		ws_conn.onopen = function(evt) {
+			ws_conn_onopen();
+		};
+		ws_conn.onmessage = function(evt) {
+			resp = JSON.parse(evt.data);
+			ws_conn_onmessage(resp);
+		};
+	}
 }
 
 var file_dlg_result_target = '';
-var file_dlg_conn;
 var file_dlg_cwd = '';
 
 var file_dlg_headers = {
@@ -55,10 +105,31 @@ function file_dlg_list(dir) {
 	if(dir) {
 		data['dir'] = dir;
 	}
-	file_dlg_conn.send(JSON.stringify({
+	ws_conn.send(JSON.stringify({
 		'msg_type': ws_msg_types.REQ_FILE_LIST,
 		'data': data
 	}));				
+};
+
+function file_dlg_populate(resp) {
+	if (resp.msg_type == ws_msg_types.RSP_FILE_LIST) {
+		file_dlg_cwd = resp.data.dir;
+		$('#filedlg_div_dir').html(file_dlg_cwd);
+		files_html = "";
+		for(idx=0; idx < resp.data.filelist.length; idx++) {
+			filename = resp.data.filelist[idx][0];
+			is_dir = resp.data.filelist[idx][1];
+			files_html += ("<li class=\"" + (is_dir ? "filedlg_dir" : "filedlg_file") + "\">" + filename + "</li>"); 
+		}
+		$('#filedlg_div_files').html(files_html);
+		$('.filedlg_dir').click(function(e){
+			file_dlg_list($(this).html());
+		});
+		$('.filedlg_file').click(function(e){
+			sel_file = $(this).html();
+			$('#filedlg_filename').val(sel_file);
+		});
+	}	
 };
 
 function file_dlg_init(target_id) {
@@ -67,36 +138,11 @@ function file_dlg_init(target_id) {
 	$('#filedlg_filename').val('');
 	$('#filedlg_div_title').html(file_dlg_headers[target_id]);
 	$('#filedlg_div').modal('show');
-	$('#filedlg_div').on('hidden.bs.modal', function() {
-		if(file_dlg_conn) {
-			file_dlg_conn.close();						
-		}
-	});
 
-	file_dlg_conn = do_ws(function(evt){
+	do_ws(function(){
 			file_dlg_list();
-		}, 
-		function(evt) {
-			resp = JSON.parse(evt.data);
-			if (resp.msg_type == ws_msg_types.RSP_FILE_LIST) {
-				file_dlg_cwd = resp.data.dir;
-				$('#filedlg_div_dir').html(file_dlg_cwd);
-				files_html = "";
-				for(idx=0; idx < resp.data.filelist.length; idx++) {
-					filename = resp.data.filelist[idx][0];
-					is_dir = resp.data.filelist[idx][1];
-					files_html += ("<li class=\"" + (is_dir ? "filedlg_dir" : "filedlg_file") + "\">" + filename + "</li>"); 
-				}
-				$('#filedlg_div_files').html(files_html);
-				$('.filedlg_dir').click(function(e){
-					file_dlg_list($(this).html());
-				});
-				$('.filedlg_file').click(function(e){
-					sel_file = $(this).html();
-					$('#filedlg_filename').val(sel_file);
-				});
-			}
-		});
+		},
+		file_dlg_populate);
 };
 
 function select_input_format(selVal) {
@@ -119,12 +165,12 @@ function logoff() {
 	do_ws(function() {
 			ws_conn.send(JSON.stringify({
 				'msg_type': ws_msg_types.REQ_LOGOUT,
-				'data': ""
+				'data': {}
 			}));
 		},
-		function(evt) {
-			resp = JSON.parse(evt.data);
+		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_LOGOUT) {
+				$.removeCookie("cloudcs_sess");
 				ws_conn.close();
 				$('body').html('<p></p>');
 			}
@@ -171,8 +217,7 @@ function load_cfg(filename) {
 				'data': {'filename': filename}
 			}));
 		},
-		function(evt) {
-			resp = JSON.parse(evt.data);
+		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_LOAD_CFG) {
 				if(resp.data.success) {
 					alert_in_page('Loaded configuration from ' + filename, 'success');
@@ -331,8 +376,7 @@ function run_job() {
 				'data': cfg
 			}));
 		},
-		function(evt) {
-			resp = JSON.parse(evt.data);
+		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_RUN_JOB) {
 				$('#results_div_msg').val((resp.data.success ? 'Success' : 'Failed') + '.\n' + $('#results_div_msg').val());
 				ws_conn.close();
@@ -359,8 +403,7 @@ function run_verify() {
 				'data': ""
 			}));
 		},
-		function(evt) {
-			resp = JSON.parse(evt.data);
+		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_RUN_VERIFY) {
 				if(resp.data.success) {
 					$('#results_div_msg').val('All tests passed.\n' + $('#results_div_msg').val());
@@ -381,8 +424,9 @@ function alert_in_page(msg, level) {
 	$('#in_page_alert').show();
 };
 
-function init_circuitscape(ws_url) {
+function init_circuitscape(ws_url, sess_id) {
 	cs_ws_url = ws_url;
+	cs_session = sess_id;
 	$('#in_page_alert').hide();
 	$('#menu_load_file').hide();
 	$('#menu_load_file').change(function(){

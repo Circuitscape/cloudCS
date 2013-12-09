@@ -10,6 +10,11 @@ import tornado.websocket
 import tornado.httpserver
 import tornado.ioloop
 
+from cloudauth import GoogleHandler as AuthHandler
+from cloudauth import SessionInMemory as Session
+
+MULTIUSER = True
+
 SERVER_HOST = "localhost"
 SERVER_PORT = 8080
 SERVER_WS_PATH = r'/websocket'
@@ -18,21 +23,6 @@ SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_WS_PATH
 logging.basicConfig()
 logger = logging.getLogger('cloudCS')
 logger.setLevel(logging.DEBUG)
-
-def stop_webserver():
-    ioloop = tornado.ioloop.IOLoop.instance()
-    ioloop.add_callback(lambda x: x.stop(), ioloop)
-
-def run_webserver(ws_app, port, start_browser):
-    global SERVER_WS_URL, SERVER_PORT
-    SERVER_PORT = port
-    
-    server = tornado.httpserver.HTTPServer(ws_app)
-    server.listen(port)
-    SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(port) + SERVER_WS_PATH
-    if start_browser:
-        webbrowser.open('http://localhost:' + str(port) + '/')
-    tornado.ioloop.IOLoop.instance().start()
     
 
 class WebSocketLogger(logging.Handler):
@@ -62,6 +52,9 @@ class WSMsg:
     RSP_ERROR = -1
     SHOW_LOG = 0
     
+    REQ_AUTH = 1000
+    RSP_AUTH = 1001
+    
     REQ_FILE_LIST = 1
     RSP_FILE_LIST = 2
     
@@ -76,6 +69,7 @@ class WSMsg:
     
     REQ_LOAD_CFG = 9
     RSP_LOAD_CFG = 10
+    
     
     def __init__(self, msg_type=None, msg_nv=None, msg=None):
         if msg:
@@ -113,9 +107,11 @@ class WSMsg:
 
 class WebSocketHandler(tornado.websocket.WebSocketHandler):
     def open(self):
+        self.is_authenticated = False
         logger.debug("websocket connection opened")
             
     def on_close(self):
+        self.is_authenticated = False
         logger.debug("websocket connection closed")
 
 #     def dump(self, obj):
@@ -123,22 +119,25 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 #             print "obj.%s = %s" % (attr, getattr(obj, attr))
     
     def on_message(self, message):
-        #self.dump(message)
+        global MULTIUSER
         logger.debug("websocket message received [%s]"%(str(message),))
         wsmsg = WSMsg(msg=message)
         is_shutdown_msg = False
         response = {}
         try:
-            if (wsmsg.msg_type() == WSMsg.REQ_FILE_LIST):
-                response, is_shutdown_msg = self.handle_file_list(wsmsg)
-            elif (wsmsg.msg_type() == WSMsg.REQ_LOGOUT):
-                response, is_shutdown_msg = self.handle_logout(wsmsg)
-            elif (wsmsg.msg_type() == WSMsg.REQ_RUN_VERIFY):
-                response, is_shutdown_msg = self.handle_run_verify(wsmsg)
-            elif (wsmsg.msg_type() == WSMsg.REQ_RUN_JOB):
-                response, is_shutdown_msg = self.handle_run_job(wsmsg)
-            elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
-                response, is_shutdown_msg = self.handle_load_config(wsmsg)
+            if MULTIUSER and not self.is_authenticated:
+                response, is_shutdown_msg = self.handle_auth(wsmsg)
+            else:            
+                if (wsmsg.msg_type() == WSMsg.REQ_FILE_LIST):
+                    response, is_shutdown_msg = self.handle_file_list(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_LOGOUT):
+                    response, is_shutdown_msg = self.handle_logout(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_RUN_VERIFY):
+                    response, is_shutdown_msg = self.handle_run_verify(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_RUN_JOB):
+                    response, is_shutdown_msg = self.handle_run_job(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
+                    response, is_shutdown_msg = self.handle_load_config(wsmsg)
                 
             wsmsg.reply(response, self)
         except Exception:
@@ -146,7 +145,24 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             wsmsg.error(-1, self)
             
         if is_shutdown_msg:
-            stop_webserver()
+            if MULTIUSER:
+                Session.logout(wsmsg.data('sess_id'))
+            else:
+                stop_webserver()
+
+#     def auth(self, wsmsg):
+#         if (not self.is_authenticated) and (wsmsg.msg_type() == WSMsg.REQ_AUTH):
+#             sess_id = wsmsg.data('sess_id')
+#             self.is_authenticated = Session.validate_sess_id(sess_id)
+#         return self.is_authenticated
+
+    def handle_auth(self, wsmsg):
+        if (not self.is_authenticated) and (wsmsg.msg_type() == WSMsg.REQ_AUTH):
+            sess_id = wsmsg.data('sess_id')
+            self.is_authenticated = Session.validate_sess_id(sess_id)
+            return ({'success': self.is_authenticated}, not self.is_authenticated)
+        return (None, not self.is_authenticated)
+        
 
     def handle_load_config(self, wsmsg):
         result = None
@@ -225,6 +241,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         return ({'complete': True, 'success': testsPassed}, False)
     
     def handle_logout(self, wsmsg):
+        logger.debug("logging out")
         return ({}, True)
 
     def handle_file_list(self, wsmsg):
@@ -242,11 +259,28 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 
 class IndexPageHandler(tornado.web.RequestHandler):
     def get(self):
+        global MULTIUSER
+        if MULTIUSER:
+            if not Session.validate(self):
+                return
+            username = Session.validated_user_name(self);
+            txt_shutdown = "Logout"
+            txt_shutdown_msg = "Are you sure you want to logout from Circuitscape?"
+            sess_id = Session.extract_session_id(self)
+        else:
+            username = getpass.getuser()
+            txt_shutdown = "Shutdown"
+            txt_shutdown_msg = "Are you sure you want to close Circuitscape?"
+            sess_id = ''
+        
         kwargs = {
-                  'username': getpass.getuser(),
+                  'username': username,
                   'version': cs_version,
                   'author': cs_author,
                   'ws_url': SERVER_WS_URL,
+                  'sess_id': sess_id,
+                  'txt_shutdown': txt_shutdown,
+                  'txt_shutdown_msg': txt_shutdown_msg
         }
         self.render("cs.html", **kwargs)
 
@@ -259,13 +293,31 @@ class Application(tornado.web.Application):
             (r'/static/(.*)', tornado.web.StaticFileHandler, {'path': 'templates/static'}),
             (r'/ext/(.*)', tornado.web.StaticFileHandler, {'path': 'ext'})
         ]
+        
+        if MULTIUSER:
+            handlers.append((r'/auth', AuthHandler))
 
         settings = {
             'template_path': 'templates',
-            'debug': True
+            'debug': True,
+            "cookie_secret": Session.SALT,
         }
         tornado.web.Application.__init__(self, handlers, **settings)
 
-def run_webgui(port=SERVER_PORT, start_browser=True):
+def stop_webserver():
+    ioloop = tornado.ioloop.IOLoop.instance()
+    ioloop.add_callback(lambda x: x.stop(), ioloop)
+
+def run_webgui(port=SERVER_PORT, start_browser=True, multiuser=True):
     logger.debug('starting up...')
-    run_webserver(Application(), port, start_browser)
+    global SERVER_WS_URL, SERVER_PORT, MULTIUSER
+    if port:
+        SERVER_PORT = port
+    MULTIUSER = multiuser
+    
+    server = tornado.httpserver.HTTPServer(Application())
+    server.listen(SERVER_PORT)
+    SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_WS_PATH
+    if start_browser:
+        webbrowser.open('http://localhost:' + str(SERVER_PORT) + '/')
+    tornado.ioloop.IOLoop.instance().start()

@@ -409,10 +409,10 @@
 				<div class="modal-content">
 					<div class="modal-header">
 						<a class="close" data-dismiss="modal">&times;</a>
-						<h3 id="logout_div_title">Shutdown</h3>
+						<h3 id="logout_div_title">{{txt_shutdown}}</h3>
 					</div>
 					<div class="modal-body">
-						Are you sure you want to close Circuitscape?
+						{{txt_shutdown_msg}}
 					</div>
 					<div class="modal-footer">
 						<a href="#" class="btn btn-primary" data-dismiss="modal" onclick="logoff();">Yes</a>
@@ -480,13 +480,14 @@
 		================================================== -->
 		<!-- Placed at the end of the document so the pages load faster -->
 		<script src="ext/jquery-1.10.2.js" type="text/javascript"></script>
+		<script src="ext/jquery.cookie.js" type="text/javascript"></script>
 		<script src="ext/bootstrap/js/bootstrap.min.js" type="text/javascript"></script>
 		<script src="static/bootstrap-spinedit.js" type="text/javascript"></script>
 		<script src="static/script.js" type="text/javascript"></script>
 	
 		<script type="text/javascript">
 			$(document).ready(function() {
-				init_circuitscape('{{ws_url}}');
+				init_circuitscape('{{ws_url}}', '{{sess_id}}');
 			});
 		</script>
 	</body>
