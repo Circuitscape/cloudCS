@@ -287,18 +287,22 @@ class IndexPageHandler(tornado.web.RequestHandler):
 
 class Application(tornado.web.Application):
     def __init__(self):
+        pkgpath, _fname = os.path.split(__file__)
+        templates_path = os.path.join(pkgpath, 'templates')
+        static_path = os.path.join(pkgpath, 'templates/static')
+        ext_path = os.path.join(pkgpath, 'ext')
         handlers = [
             (r'/', IndexPageHandler),
             (SERVER_WS_PATH, WebSocketHandler),
-            (r'/static/(.*)', tornado.web.StaticFileHandler, {'path': 'templates/static'}),
-            (r'/ext/(.*)', tornado.web.StaticFileHandler, {'path': 'ext'})
+            (r'/static/(.*)', tornado.web.StaticFileHandler, {'path': static_path}),
+            (r'/ext/(.*)', tornado.web.StaticFileHandler, {'path': ext_path})
         ]
         
         if MULTIUSER:
             handlers.append((r'/auth', AuthHandler))
 
         settings = {
-            'template_path': 'templates',
+            'template_path': templates_path,
             'debug': True,
             "cookie_secret": Session.SALT,
         }
