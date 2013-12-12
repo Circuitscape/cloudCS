@@ -6,21 +6,20 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<meta name="description" content="Circuitscape {{version}}">
 		<meta name="author" content="tan">
-		<link rel="shortcut icon" href="cs_logo.ico">
+		<link rel="shortcut icon" href="/static/cs_logo.ico">
 
 		<title>Circuitscape {{version}}</title>
 
-		<link href="ext/bootstrap/css/bootstrap.css" rel="stylesheet">
+		<link href="/ext/bootstrap/css/bootstrap.css" rel="stylesheet">
 
-		<link href="static/styles.css" rel="stylesheet">
-		<link href="static/bootstrap-spinedit.css" rel="stylesheet">
+		<link href="/static/styles.css" rel="stylesheet">
+		<link href="/static/bootstrap-spinedit.css" rel="stylesheet">
 	</head>
 
 	<body>
 
 		<!-- Wrap all page content here -->
 		<div id="wrap">
-
 			<!-- Fixed navbar -->
 			<div class="navbar navbar-inverse navbar-fixed-top" role="navigation">
 				<div class="container">
@@ -76,9 +75,7 @@
 			<div class="container">
 				<div class="alert alert-dismissable" id="in_page_alert">
 				  <button type="button" class="close" aria-hidden="true" onclick="$('#in_page_alert').hide()">&times;</button>
-				  <div id="in_page_alert_msg">
-				  	<strong>Warning!</strong> Best check yo self, you're not looking too good.				  	
-				  </div>
+				  <div id="in_page_alert_msg"> </div>
 				</div>				
 				<ul class="nav nav-tabs" id="input_tabs">
 				  <li class="active"><a href="#tab_input_types">Input Types</a></li>
@@ -422,6 +419,7 @@
 			</div>
 		</div>
 
+		{% if filedlg_type == "srvr" %}
 		<div class="modal fade" id="filedlg_div">
 			<div class="modal-dialog">
 				<div class="modal-content">
@@ -441,7 +439,7 @@
 				</div>
 			</div>
 		</div>
-
+		{% end %}
 		<div class="modal fade" id="about_div">
 			<div class="modal-dialog">
 				<div class="modal-content">
@@ -479,15 +477,22 @@
 		<!-- Bootstrap core JavaScript
 		================================================== -->
 		<!-- Placed at the end of the document so the pages load faster -->
-		<script src="ext/jquery-1.10.2.js" type="text/javascript"></script>
-		<script src="ext/jquery.cookie.js" type="text/javascript"></script>
-		<script src="ext/bootstrap/js/bootstrap.min.js" type="text/javascript"></script>
-		<script src="static/bootstrap-spinedit.js" type="text/javascript"></script>
-		<script src="static/script.js" type="text/javascript"></script>
+		<script src="/ext/jquery-1.10.2.js" type="text/javascript"></script>
+		<script src="/ext/jquery.cookie.js" type="text/javascript"></script>
+		<script src="/ext/bootstrap/js/bootstrap.min.js" type="text/javascript"></script>
+		<script src="/static/bootstrap-spinedit.js" type="text/javascript"></script>
+		{%if filedlg_type == "google"%}
+		<script type="text/javascript" src="https://apis.google.com/js/api.js" type="text/javascript"></script>
+		{%end%}
+		<script src="/static/filedlg_{{filedlg_type}}.js" type="text/javascript"></script>
+		<script src="/static/script.js" type="text/javascript"></script>
 	
 		<script type="text/javascript">
 			$(document).ready(function() {
 				init_circuitscape('{{ws_url}}', '{{sess_id}}');
+				{% if filedlg_type == "google" %}
+					file_dlg_init_api('{{filedlg_developer_key}}', '{{filedlg_app_id}}', '{{userid}}');
+				{% end %}
 			});
 		</script>
 	</body>

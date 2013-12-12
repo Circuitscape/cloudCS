@@ -1,4 +1,4 @@
-import sys, os, webbrowser, json, logging, getpass, tempfile, StringIO
+import os, webbrowser, json, logging, getpass, tempfile, StringIO
 from circuitscape.compute import Compute
 from circuitscape.cfg import CSConfig
 from circuitscape import __version__ as cs_version
@@ -10,15 +10,22 @@ import tornado.websocket
 import tornado.httpserver
 import tornado.ioloop
 
+from common import PageHandlerBase, ErrorHandler
 from cloudauth import GoogleHandler as AuthHandler
-from cloudauth import SessionInMemory as Session
+from session import SessionInMemory as Session
+from cloudstore import GoogleDriveHandler as StorageHandler
 
 MULTIUSER = True
 
 SERVER_HOST = "localhost"
 SERVER_PORT = 8080
 SERVER_WS_PATH = r'/websocket'
+SERVER_LOGIN_AUTH_PATH = r'/auth/login'
+SERVER_STORAGE_AUTH_PATH = r'/auth/storage'
 SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_WS_PATH
+SERVER_STORAGE_AUTH_REDIRECT_URI = "http://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_STORAGE_AUTH_PATH
+
+SERVER_CONFIG = None
 
 logging.basicConfig()
 logger = logging.getLogger('cloudCS')
@@ -119,6 +126,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 #             print "obj.%s = %s" % (attr, getattr(obj, attr))
     
     def on_message(self, message):
+        #logger.debug("got request url " + self.request.full_url())
         global MULTIUSER
         logger.debug("websocket message received [%s]"%(str(message),))
         wsmsg = WSMsg(msg=message)
@@ -128,7 +136,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             if MULTIUSER and not self.is_authenticated:
                 response, is_shutdown_msg = self.handle_auth(wsmsg)
             else:            
-                if (wsmsg.msg_type() == WSMsg.REQ_FILE_LIST):
+                if (wsmsg.msg_type() == WSMsg.REQ_FILE_LIST) and not MULTIUSER:
                     response, is_shutdown_msg = self.handle_file_list(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_LOGOUT):
                     response, is_shutdown_msg = self.handle_logout(wsmsg)
@@ -158,20 +166,34 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 
     def handle_auth(self, wsmsg):
         if (not self.is_authenticated) and (wsmsg.msg_type() == WSMsg.REQ_AUTH):
-            sess_id = wsmsg.data('sess_id')
-            self.is_authenticated = Session.validate_sess_id(sess_id)
+            self.sess_id = wsmsg.data('sess_id')
+            self.is_authenticated = Session.validate_sess_id(self.sess_id)
+            if self.is_authenticated:
+                self.work_dir = Session.work_dir(self.sess_id)
+                self.storage_creds, self.store = Session.get_storage(self.sess_id)
             return ({'success': self.is_authenticated}, not self.is_authenticated)
         return (None, not self.is_authenticated)
         
 
     def handle_load_config(self, wsmsg):
+        global MULTIUSER
         result = None
         success = False
         try:
             filepath = wsmsg.data('filename')
-            filedir, _filename = os.path.split(filepath)
+            logger.debug("handle_load_config filepath: " + filepath)
+            if MULTIUSER:
+                logger.debug("translating filepath to local in multiuser mode")
+                filepath = self.store.copy_to_local(filepath, self.work_dir)
+            logger.debug("handle_load_config filepath: " + filepath)
+            
             cfg = CSConfig(filepath)
-            result = cfg.as_dict(rel_to_abs=filedir)
+            
+            if MULTIUSER:
+                result = cfg.as_dict()
+            else:
+                filedir, _filename = os.path.split(filepath)
+                result = cfg.as_dict(rel_to_abs=filedir)
             success = True
         except Exception as e:
             logger.exception("Error reading configuration from %s"%(wsmsg.data('filename'),))
@@ -180,23 +202,42 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         return ({'cfg': result, 'success': success}, False)
 
     def handle_run_job(self, wsmsg):
+        wslogger = WebSocketLogger(self)        
         solver_failed = True
-        
+        output_cloud_folder = None
+        output_folder = None
         cfg = CSConfig()
         for key in wsmsg.data_keys():
-            cfg.__setattr__(key, wsmsg.data(key))
+            val = wsmsg.data(key)
+            if MULTIUSER and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
+                # if val is gdrive location, translate it to local drive
+                if val.startswith("gdrive://"):
+                    if key == 'output_file':
+                        # store the output gdrive folder
+                        wslogger.send_log_msg("preparing cloud store output folder: " + val)
+                        output_cloud_folder = val
+                        output_folder = os.path.join(self.work_dir, 'output')
+                        os.mkdir(output_folder)
+                        val = os.path.join(output_folder, 'results.out')
+                    else:
+                        # copy the file locally
+                        wslogger.send_log_msg("reading from cloud store: " + val)
+                        val = self.store.copy_to_local(val, self.work_dir)
+            cfg.__setattr__(key, val)
+        
+        wslogger.send_log_msg("verifying configuration...")
         (all_options_entered, message) = cfg.check()
         if not all_options_entered:
             wsmsg.error(message, self)
         else:
-            # TODO: In cloud mode, this would be a temporary directory
+            # In cloud mode, this would be a temporary directory
             outdir, _out_file = os.path.split(cfg.output_file)
             
             try:
+                wslogger.send_log_msg("storing final configuration...")
                 configFile = os.path.join(outdir, 'circuitscape.ini')
                 cfg.write(configFile)
     
-                wslogger = WebSocketLogger(self)
                 cs = Compute(configFile, wslogger)
                 result, solver_failed = cs.compute()
                 wslogger.send_log_msg("result: \n" + str(result))
@@ -205,6 +246,16 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 wsmsg.error(message, self)
 
         success = not solver_failed
+        
+        if success and MULTIUSER:
+            wslogger.send_log_msg("uploading results to cloud store...")
+            for root, _dirs, files in os.walk(output_folder, topdown=False):
+                for name in files:
+                    outfile = os.path.join(root, name)
+                    wslogger.send_log_msg("uploading " + name + "...")
+                    self.store.copy_to_remote(output_cloud_folder, outfile)
+            wslogger.send_log_msg("uploaded results to cloud store")
+            
         return ({'complete': True, 'success': success}, False)
             
         
@@ -257,32 +308,50 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             filelist.append((fname, is_dir))
         return ({'filelist': filelist, 'dir': curdir}, False)
 
-class IndexPageHandler(tornado.web.RequestHandler):
+    
+
+class IndexPageHandler(PageHandlerBase):
     def get(self):
+        #logger.debug("got request url " + self.request.full_url())
         global MULTIUSER
         if MULTIUSER:
             if not Session.validate(self):
                 return
             username = Session.validated_user_name(self);
+            userid = Session.validated_user_id(self);
             txt_shutdown = "Logout"
             txt_shutdown_msg = "Are you sure you want to logout from Circuitscape?"
+            filedlg_type = "google"
+            filedlg_developer_key = SERVER_CONFIG.get("cloudCS", "GOOGLE_DEVELOPER_KEY")
+            filedlg_app_id = SERVER_CONFIG.get("cloudCS", "GOOGLE_CLIENT_ID")
             sess_id = Session.extract_session_id(self)
         else:
-            username = getpass.getuser()
+            userid = username = getpass.getuser()
             txt_shutdown = "Shutdown"
             txt_shutdown_msg = "Are you sure you want to close Circuitscape?"
+            filedlg_type = "srvr"
+            filedlg_developer_key = None
+            filedlg_app_id = None
             sess_id = ''
         
         kwargs = {
                   'username': username,
+                  'userid': userid,
                   'version': cs_version,
                   'author': cs_author,
                   'ws_url': SERVER_WS_URL,
                   'sess_id': sess_id,
                   'txt_shutdown': txt_shutdown,
-                  'txt_shutdown_msg': txt_shutdown_msg
+                  'txt_shutdown_msg': txt_shutdown_msg,
+                  'filedlg_type': filedlg_type,
+                  'filedlg_developer_key': filedlg_developer_key,
+                  'filedlg_app_id': filedlg_app_id
         }
         self.render("cs.html", **kwargs)
+
+
+    def get_error_html(self, status_code, **kwargs):
+        return self.generic_write_error(status_code, message="Error serving your request.")
 
 
 class Application(tornado.web.Application):
@@ -299,29 +368,50 @@ class Application(tornado.web.Application):
         ]
         
         if MULTIUSER:
-            handlers.append((r'/auth', AuthHandler))
+            Session.SALT = SERVER_CONFIG.get("cloudCS", "SECURE_SALT")
+            SERVER_CONFIG.set("cloudCS", "GOOGLE_STORAGE_AUTH_REDIRECT_URI", SERVER_STORAGE_AUTH_REDIRECT_URI)
+            StorageHandler.init(SERVER_CONFIG) #REDIRECT_URI = SERVER_STORAGE_AUTH_REDIRECT_URI
+            handlers.append((SERVER_LOGIN_AUTH_PATH, AuthHandler))
+            handlers.append((SERVER_STORAGE_AUTH_PATH, StorageHandler))
 
         settings = {
             'template_path': templates_path,
             'debug': True,
             "cookie_secret": Session.SALT,
+            "error_handler": ErrorHandler,
         }
         tornado.web.Application.__init__(self, handlers, **settings)
 
-def stop_webserver():
+def stop_webserver(from_signal=False):
     ioloop = tornado.ioloop.IOLoop.instance()
-    ioloop.add_callback(lambda x: x.stop(), ioloop)
+    if from_signal:
+        ioloop.add_callback_from_signal(lambda x: x.stop(), ioloop)
+    else:
+        ioloop.add_callback(lambda x: x.stop(), ioloop)
 
-def run_webgui(port=SERVER_PORT, start_browser=True, multiuser=True):
+def run_webgui(cfg):
     logger.debug('starting up...')
-    global SERVER_WS_URL, SERVER_PORT, MULTIUSER
-    if port:
-        SERVER_PORT = port
-    MULTIUSER = multiuser
+    global SERVER_WS_URL, SERVER_PORT, MULTIUSER, SERVER_CONFIG
+    
+    SERVER_CONFIG = cfg
+    SERVER_PORT = cfg.getint("cloudCS", "port")
+    MULTIUSER = cfg.getboolean("cloudCS", "multiuser")
     
     server = tornado.httpserver.HTTPServer(Application())
     server.listen(SERVER_PORT)
     SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_WS_PATH
-    if start_browser:
-        webbrowser.open('http://localhost:' + str(SERVER_PORT) + '/')
-    tornado.ioloop.IOLoop.instance().start()
+    if not cfg.getboolean("cloudCS", "headless"):
+        webbrowser.open('http://' + SERVER_HOST + ':' + str(SERVER_PORT) + '/')
+    
+    try:
+        tornado.ioloop.IOLoop.instance().start()
+    except:
+        logger.exception("server shutdown with exception")
+        
+    logger.debug("cleaning up...")
+    try:
+        Session.logout_all()
+    except:
+        logger.exception("exception while cleaning up")
+    logger.debug("shutting down...")
+

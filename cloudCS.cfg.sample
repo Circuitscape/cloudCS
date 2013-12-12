@@ -1,0 +1,31 @@
+[cloudCS]
+
+# Headless mode
+# No browser is invoked if server is started in headless mode. 
+# Otherwise a browser is invoked automatically after the server starts up, pointing to the server start page.
+# Set to True ony when running on local machine, and not as a server.
+headless=True
+
+# Multi user mode
+# If True, the server allows multiple users to log in. 
+#     Users must log in with credentials from an oauth provider (currently only Google logins are supported).
+#     Users can only access files hosted on cloud storage (currently only Google Drive is supported)
+# If False all users of the server are logged in as the user who starts the server and have access to local resources.
+multiuser=True
+
+# Port on which to start the server
+# The server is then accessible over a browser as http://<server name>:port/
+port=8080
+
+# Secure salt is used as a key to encrypt information when required.
+# To be effective, this must be a random string, unique for each installation
+SECURE_SALT=change_this_to_a_random_string
+
+# Google API keys and secrets
+# These are required to support Google authentication and Google Drive access
+# Can be obtained after registering circuitscape application with Google.
+# More details at Google API Development documents
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_DEVELOPER_KEY=
+
