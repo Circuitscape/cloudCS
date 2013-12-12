@@ -1,4 +1,4 @@
-import sys, os, webbrowser, json, logging, getpass, tempfile, StringIO
+import os, webbrowser, json, logging, getpass, tempfile, StringIO
 from circuitscape.compute import Compute
 from circuitscape.cfg import CSConfig
 from circuitscape import __version__ as cs_version
@@ -10,29 +10,26 @@ import tornado.websocket
 import tornado.httpserver
 import tornado.ioloop
 
+from common import PageHandlerBase, ErrorHandler
+from cloudauth import GoogleHandler as AuthHandler
+from session import SessionInMemory as Session
+from cloudstore import GoogleDriveHandler as StorageHandler
+
+MULTIUSER = True
+
 SERVER_HOST = "localhost"
 SERVER_PORT = 8080
 SERVER_WS_PATH = r'/websocket'
+SERVER_LOGIN_AUTH_PATH = r'/auth/login'
+SERVER_STORAGE_AUTH_PATH = r'/auth/storage'
 SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_WS_PATH
+SERVER_STORAGE_AUTH_REDIRECT_URI = "http://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_STORAGE_AUTH_PATH
+
+SERVER_CONFIG = None
 
 logging.basicConfig()
 logger = logging.getLogger('cloudCS')
 logger.setLevel(logging.DEBUG)
-
-def stop_webserver():
-    ioloop = tornado.ioloop.IOLoop.instance()
-    ioloop.add_callback(lambda x: x.stop(), ioloop)
-
-def run_webserver(ws_app, port, start_browser):
-    global SERVER_WS_URL, SERVER_PORT
-    SERVER_PORT = port
-    
-    server = tornado.httpserver.HTTPServer(ws_app)
-    server.listen(port)
-    SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(port) + SERVER_WS_PATH
-    if start_browser:
-        webbrowser.open('http://localhost:' + str(port) + '/')
-    tornado.ioloop.IOLoop.instance().start()
     
 
 class WebSocketLogger(logging.Handler):
@@ -62,6 +59,9 @@ class WSMsg:
     RSP_ERROR = -1
     SHOW_LOG = 0
     
+    REQ_AUTH = 1000
+    RSP_AUTH = 1001
+    
     REQ_FILE_LIST = 1
     RSP_FILE_LIST = 2
     
@@ -76,6 +76,7 @@ class WSMsg:
     
     REQ_LOAD_CFG = 9
     RSP_LOAD_CFG = 10
+    
     
     def __init__(self, msg_type=None, msg_nv=None, msg=None):
         if msg:
@@ -113,9 +114,11 @@ class WSMsg:
 
 class WebSocketHandler(tornado.websocket.WebSocketHandler):
     def open(self):
+        self.is_authenticated = False
         logger.debug("websocket connection opened")
             
     def on_close(self):
+        self.is_authenticated = False
         logger.debug("websocket connection closed")
 
 #     def dump(self, obj):
@@ -123,22 +126,26 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 #             print "obj.%s = %s" % (attr, getattr(obj, attr))
     
     def on_message(self, message):
-        #self.dump(message)
+        #logger.debug("got request url " + self.request.full_url())
+        global MULTIUSER
         logger.debug("websocket message received [%s]"%(str(message),))
         wsmsg = WSMsg(msg=message)
         is_shutdown_msg = False
         response = {}
         try:
-            if (wsmsg.msg_type() == WSMsg.REQ_FILE_LIST):
-                response, is_shutdown_msg = self.handle_file_list(wsmsg)
-            elif (wsmsg.msg_type() == WSMsg.REQ_LOGOUT):
-                response, is_shutdown_msg = self.handle_logout(wsmsg)
-            elif (wsmsg.msg_type() == WSMsg.REQ_RUN_VERIFY):
-                response, is_shutdown_msg = self.handle_run_verify(wsmsg)
-            elif (wsmsg.msg_type() == WSMsg.REQ_RUN_JOB):
-                response, is_shutdown_msg = self.handle_run_job(wsmsg)
-            elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
-                response, is_shutdown_msg = self.handle_load_config(wsmsg)
+            if MULTIUSER and not self.is_authenticated:
+                response, is_shutdown_msg = self.handle_auth(wsmsg)
+            else:            
+                if (wsmsg.msg_type() == WSMsg.REQ_FILE_LIST) and not MULTIUSER:
+                    response, is_shutdown_msg = self.handle_file_list(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_LOGOUT):
+                    response, is_shutdown_msg = self.handle_logout(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_RUN_VERIFY):
+                    response, is_shutdown_msg = self.handle_run_verify(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_RUN_JOB):
+                    response, is_shutdown_msg = self.handle_run_job(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
+                    response, is_shutdown_msg = self.handle_load_config(wsmsg)
                 
             wsmsg.reply(response, self)
         except Exception:
@@ -146,16 +153,47 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             wsmsg.error(-1, self)
             
         if is_shutdown_msg:
-            stop_webserver()
+            if MULTIUSER:
+                Session.logout(wsmsg.data('sess_id'))
+            else:
+                stop_webserver()
+
+#     def auth(self, wsmsg):
+#         if (not self.is_authenticated) and (wsmsg.msg_type() == WSMsg.REQ_AUTH):
+#             sess_id = wsmsg.data('sess_id')
+#             self.is_authenticated = Session.validate_sess_id(sess_id)
+#         return self.is_authenticated
+
+    def handle_auth(self, wsmsg):
+        if (not self.is_authenticated) and (wsmsg.msg_type() == WSMsg.REQ_AUTH):
+            self.sess_id = wsmsg.data('sess_id')
+            self.is_authenticated = Session.validate_sess_id(self.sess_id)
+            if self.is_authenticated:
+                self.work_dir = Session.work_dir(self.sess_id)
+                self.storage_creds, self.store = Session.get_storage(self.sess_id)
+            return ({'success': self.is_authenticated}, not self.is_authenticated)
+        return (None, not self.is_authenticated)
+        
 
     def handle_load_config(self, wsmsg):
+        global MULTIUSER
         result = None
         success = False
         try:
             filepath = wsmsg.data('filename')
-            filedir, _filename = os.path.split(filepath)
+            logger.debug("handle_load_config filepath: " + filepath)
+            if MULTIUSER:
+                logger.debug("translating filepath to local in multiuser mode")
+                filepath = self.store.copy_to_local(filepath, self.work_dir)
+            logger.debug("handle_load_config filepath: " + filepath)
+            
             cfg = CSConfig(filepath)
-            result = cfg.as_dict(rel_to_abs=filedir)
+            
+            if MULTIUSER:
+                result = cfg.as_dict()
+            else:
+                filedir, _filename = os.path.split(filepath)
+                result = cfg.as_dict(rel_to_abs=filedir)
             success = True
         except Exception as e:
             logger.exception("Error reading configuration from %s"%(wsmsg.data('filename'),))
@@ -164,23 +202,42 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         return ({'cfg': result, 'success': success}, False)
 
     def handle_run_job(self, wsmsg):
+        wslogger = WebSocketLogger(self)        
         solver_failed = True
-        
+        output_cloud_folder = None
+        output_folder = None
         cfg = CSConfig()
         for key in wsmsg.data_keys():
-            cfg.__setattr__(key, wsmsg.data(key))
+            val = wsmsg.data(key)
+            if MULTIUSER and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
+                # if val is gdrive location, translate it to local drive
+                if val.startswith("gdrive://"):
+                    if key == 'output_file':
+                        # store the output gdrive folder
+                        wslogger.send_log_msg("preparing cloud store output folder: " + val)
+                        output_cloud_folder = val
+                        output_folder = os.path.join(self.work_dir, 'output')
+                        os.mkdir(output_folder)
+                        val = os.path.join(output_folder, 'results.out')
+                    else:
+                        # copy the file locally
+                        wslogger.send_log_msg("reading from cloud store: " + val)
+                        val = self.store.copy_to_local(val, self.work_dir)
+            cfg.__setattr__(key, val)
+        
+        wslogger.send_log_msg("verifying configuration...")
         (all_options_entered, message) = cfg.check()
         if not all_options_entered:
             wsmsg.error(message, self)
         else:
-            # TODO: In cloud mode, this would be a temporary directory
+            # In cloud mode, this would be a temporary directory
             outdir, _out_file = os.path.split(cfg.output_file)
             
             try:
+                wslogger.send_log_msg("storing final configuration...")
                 configFile = os.path.join(outdir, 'circuitscape.ini')
                 cfg.write(configFile)
     
-                wslogger = WebSocketLogger(self)
                 cs = Compute(configFile, wslogger)
                 result, solver_failed = cs.compute()
                 wslogger.send_log_msg("result: \n" + str(result))
@@ -189,6 +246,16 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 wsmsg.error(message, self)
 
         success = not solver_failed
+        
+        if success and MULTIUSER:
+            wslogger.send_log_msg("uploading results to cloud store...")
+            for root, _dirs, files in os.walk(output_folder, topdown=False):
+                for name in files:
+                    outfile = os.path.join(root, name)
+                    wslogger.send_log_msg("uploading " + name + "...")
+                    self.store.copy_to_remote(output_cloud_folder, outfile)
+            wslogger.send_log_msg("uploaded results to cloud store")
+            
         return ({'complete': True, 'success': success}, False)
             
         
@@ -225,6 +292,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         return ({'complete': True, 'success': testsPassed}, False)
     
     def handle_logout(self, wsmsg):
+        logger.debug("logging out")
         return ({}, True)
 
     def handle_file_list(self, wsmsg):
@@ -240,32 +308,110 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             filelist.append((fname, is_dir))
         return ({'filelist': filelist, 'dir': curdir}, False)
 
-class IndexPageHandler(tornado.web.RequestHandler):
+    
+
+class IndexPageHandler(PageHandlerBase):
     def get(self):
+        #logger.debug("got request url " + self.request.full_url())
+        global MULTIUSER
+        if MULTIUSER:
+            if not Session.validate(self):
+                return
+            username = Session.validated_user_name(self);
+            userid = Session.validated_user_id(self);
+            txt_shutdown = "Logout"
+            txt_shutdown_msg = "Are you sure you want to logout from Circuitscape?"
+            filedlg_type = "google"
+            filedlg_developer_key = SERVER_CONFIG.get("cloudCS", "GOOGLE_DEVELOPER_KEY")
+            filedlg_app_id = SERVER_CONFIG.get("cloudCS", "GOOGLE_CLIENT_ID")
+            sess_id = Session.extract_session_id(self)
+        else:
+            userid = username = getpass.getuser()
+            txt_shutdown = "Shutdown"
+            txt_shutdown_msg = "Are you sure you want to close Circuitscape?"
+            filedlg_type = "srvr"
+            filedlg_developer_key = None
+            filedlg_app_id = None
+            sess_id = ''
+        
         kwargs = {
-                  'username': getpass.getuser(),
+                  'username': username,
+                  'userid': userid,
                   'version': cs_version,
                   'author': cs_author,
                   'ws_url': SERVER_WS_URL,
+                  'sess_id': sess_id,
+                  'txt_shutdown': txt_shutdown,
+                  'txt_shutdown_msg': txt_shutdown_msg,
+                  'filedlg_type': filedlg_type,
+                  'filedlg_developer_key': filedlg_developer_key,
+                  'filedlg_app_id': filedlg_app_id
         }
         self.render("cs.html", **kwargs)
 
 
+    def get_error_html(self, status_code, **kwargs):
+        return self.generic_write_error(status_code, message="Error serving your request.")
+
+
 class Application(tornado.web.Application):
     def __init__(self):
+        pkgpath, _fname = os.path.split(__file__)
+        templates_path = os.path.join(pkgpath, 'templates')
+        static_path = os.path.join(pkgpath, 'templates/static')
+        ext_path = os.path.join(pkgpath, 'ext')
         handlers = [
             (r'/', IndexPageHandler),
             (SERVER_WS_PATH, WebSocketHandler),
-            (r'/static/(.*)', tornado.web.StaticFileHandler, {'path': 'templates/static'}),
-            (r'/ext/(.*)', tornado.web.StaticFileHandler, {'path': 'ext'})
+            (r'/static/(.*)', tornado.web.StaticFileHandler, {'path': static_path}),
+            (r'/ext/(.*)', tornado.web.StaticFileHandler, {'path': ext_path})
         ]
+        
+        if MULTIUSER:
+            Session.SALT = SERVER_CONFIG.get("cloudCS", "SECURE_SALT")
+            SERVER_CONFIG.set("cloudCS", "GOOGLE_STORAGE_AUTH_REDIRECT_URI", SERVER_STORAGE_AUTH_REDIRECT_URI)
+            StorageHandler.init(SERVER_CONFIG) #REDIRECT_URI = SERVER_STORAGE_AUTH_REDIRECT_URI
+            handlers.append((SERVER_LOGIN_AUTH_PATH, AuthHandler))
+            handlers.append((SERVER_STORAGE_AUTH_PATH, StorageHandler))
 
         settings = {
-            'template_path': 'templates',
-            'debug': True
+            'template_path': templates_path,
+            'debug': True,
+            "cookie_secret": Session.SALT,
+            "error_handler": ErrorHandler,
         }
         tornado.web.Application.__init__(self, handlers, **settings)
 
-def run_webgui(port=SERVER_PORT, start_browser=True):
+def stop_webserver(from_signal=False):
+    ioloop = tornado.ioloop.IOLoop.instance()
+    if from_signal:
+        ioloop.add_callback_from_signal(lambda x: x.stop(), ioloop)
+    else:
+        ioloop.add_callback(lambda x: x.stop(), ioloop)
+
+def run_webgui(cfg):
     logger.debug('starting up...')
-    run_webserver(Application(), port, start_browser)
+    global SERVER_WS_URL, SERVER_PORT, MULTIUSER, SERVER_CONFIG
+    
+    SERVER_CONFIG = cfg
+    SERVER_PORT = cfg.getint("cloudCS", "port")
+    MULTIUSER = cfg.getboolean("cloudCS", "multiuser")
+    
+    server = tornado.httpserver.HTTPServer(Application())
+    server.listen(SERVER_PORT)
+    SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_WS_PATH
+    if not cfg.getboolean("cloudCS", "headless"):
+        webbrowser.open('http://' + SERVER_HOST + ':' + str(SERVER_PORT) + '/')
+    
+    try:
+        tornado.ioloop.IOLoop.instance().start()
+    except:
+        logger.exception("server shutdown with exception")
+        
+    logger.debug("cleaning up...")
+    try:
+        Session.logout_all()
+    except:
+        logger.exception("exception while cleaning up")
+    logger.debug("shutting down...")
+

@@ -1,2 +1,4 @@
 *.ini
 cloud_cs/*.pyc
+.project
+.pydevproject
