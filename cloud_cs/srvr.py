@@ -21,7 +21,7 @@ SRVR_CFG = None
 logging.basicConfig()
 logger = logging.getLogger('cloudCS')
 logger.setLevel(logging.DEBUG)
-    
+
 
 class WebSocketLogger(logging.Handler):
     def __init__(self, dest=None):
@@ -362,7 +362,7 @@ class Application(tornado.web.Application):
         ]
         
         if SRVR_CFG.multiuser:
-            Session.SALT = SRVR_CFG.cfg_get("SECURE_SALT")
+            Session.set_cfg(SRVR_CFG)
             SRVR_CFG.cfg_set("GOOGLE_STORAGE_AUTH_REDIRECT_URI", SRVR_CFG.storage_auth_redirect_uri)
             StorageHandler.init(SRVR_CFG)
             handlers.append((ServerConfig.SERVER_LOGIN_AUTH_PATH, AuthHandler))
@@ -371,7 +371,7 @@ class Application(tornado.web.Application):
         settings = {
             'template_path': templates_path,
             'debug': True,
-            "cookie_secret": Session.SALT,
+            "cookie_secret": SRVR_CFG.cfg_get("SECURE_SALT"),
             "error_handler": ErrorHandler,
         }
         tornado.web.Application.__init__(self, handlers, **settings)

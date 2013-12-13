@@ -4,10 +4,15 @@ logger = logging.getLogger('cloudCS')
 
 class Session:
     COOKIE_NAME = "cloudcs_sess"
-    SALT = "" # this should be set from configuration on initialization
+    SRVR_CFG = None
         
     def auth_valid(self, req):
+        self.local_work_dir = None
         logger.info("authenticated " + self.user_id())
+        if not self.get_cfg().is_user_allowed(self.user_id()):
+            raise RuntimeError("user not authorized")
+        logger.debug("user " + self.user_id() + " allowed")
+        
         self.local_work_dir = tempfile.mkdtemp()
         logger.debug("created temporary folder " + self.local_work_dir)
         req.set_secure_cookie(Session.COOKIE_NAME, self.sess_id, 1)
@@ -22,7 +27,15 @@ class Session:
                 for name in dirs:
                     os.rmdir(os.path.join(root, name))
             os.rmdir(outdir)
-        logger.debug("removed temporary folder " + outdir)
+            logger.debug("removed temporary folder " + outdir)
+
+    @classmethod
+    def set_cfg(cls, cfg):
+        cls.SRVR_CFG = cfg
+
+    @classmethod
+    def get_cfg(cls):
+        return cls.SRVR_CFG
 
     @classmethod
     def work_dir(cls, sess_id):
@@ -86,7 +99,7 @@ class SessionInMemory(Session):
         self.user = user
         self.uid = user['email']
         self.creation_time = time.time()
-        self.sess_id = hashlib.sha1('_'.join([self.uid, Session.SALT, str(self.creation_time)])).hexdigest()
+        self.sess_id = hashlib.sha1('_'.join([self.uid, SessionInMemory.get_cfg().cfg_get("SECURE_SALT"), str(self.creation_time)])).hexdigest()
         self.nv = {}
         SessionInMemory.SESS_STORE[self.sess_id] = self
         logger.debug("created session for " + self.uid + " with key " + self.sess_id)
