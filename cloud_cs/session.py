@@ -72,7 +72,7 @@ class Session:
 
     @classmethod
     def validate_sess_id(cls, sess_id):
-        logger.debug('validating sess_id ' + sess_id)
+        logger.debug('validating sess_id ' + str(sess_id))
         sess = cls.get_session(sess_id) if (sess_id != None) else None
         #logger.debug('sess = ' + str(sess) + " for sess_id " + sess_id)
         return (sess != None)

@@ -10,22 +10,13 @@ import tornado.websocket
 import tornado.httpserver
 import tornado.ioloop
 
+from cfg import ServerConfig
 from common import PageHandlerBase, ErrorHandler
 from cloudauth import GoogleHandler as AuthHandler
 from session import SessionInMemory as Session
 from cloudstore import GoogleDriveHandler as StorageHandler
 
-MULTIUSER = True
-
-SERVER_HOST = "localhost"
-SERVER_PORT = 8080
-SERVER_WS_PATH = r'/websocket'
-SERVER_LOGIN_AUTH_PATH = r'/auth/login'
-SERVER_STORAGE_AUTH_PATH = r'/auth/storage'
-SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_WS_PATH
-SERVER_STORAGE_AUTH_REDIRECT_URI = "http://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_STORAGE_AUTH_PATH
-
-SERVER_CONFIG = None
+SRVR_CFG = None
 
 logging.basicConfig()
 logger = logging.getLogger('cloudCS')
@@ -126,17 +117,17 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 #             print "obj.%s = %s" % (attr, getattr(obj, attr))
     
     def on_message(self, message):
+        global SRVR_CFG
         #logger.debug("got request url " + self.request.full_url())
-        global MULTIUSER
         logger.debug("websocket message received [%s]"%(str(message),))
         wsmsg = WSMsg(msg=message)
         is_shutdown_msg = False
         response = {}
         try:
-            if MULTIUSER and not self.is_authenticated:
+            if SRVR_CFG.multiuser and not self.is_authenticated:
                 response, is_shutdown_msg = self.handle_auth(wsmsg)
             else:            
-                if (wsmsg.msg_type() == WSMsg.REQ_FILE_LIST) and not MULTIUSER:
+                if (wsmsg.msg_type() == WSMsg.REQ_FILE_LIST) and not SRVR_CFG.multiuser:
                     response, is_shutdown_msg = self.handle_file_list(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_LOGOUT):
                     response, is_shutdown_msg = self.handle_logout(wsmsg)
@@ -153,7 +144,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             wsmsg.error(-1, self)
             
         if is_shutdown_msg:
-            if MULTIUSER:
+            if SRVR_CFG.multiuser:
                 Session.logout(wsmsg.data('sess_id'))
             else:
                 stop_webserver()
@@ -176,20 +167,20 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         
 
     def handle_load_config(self, wsmsg):
-        global MULTIUSER
+        global SRVR_CFG
         result = None
         success = False
         try:
             filepath = wsmsg.data('filename')
             logger.debug("handle_load_config filepath: " + filepath)
-            if MULTIUSER:
+            if SRVR_CFG.multiuser:
                 logger.debug("translating filepath to local in multiuser mode")
                 filepath = self.store.copy_to_local(filepath, self.work_dir)
             logger.debug("handle_load_config filepath: " + filepath)
             
             cfg = CSConfig(filepath)
             
-            if MULTIUSER:
+            if SRVR_CFG.multiuser:
                 result = cfg.as_dict()
             else:
                 filedir, _filename = os.path.split(filepath)
@@ -202,6 +193,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         return ({'cfg': result, 'success': success}, False)
 
     def handle_run_job(self, wsmsg):
+        global SRVR_CFG
         wslogger = WebSocketLogger(self)        
         solver_failed = True
         output_cloud_folder = None
@@ -209,7 +201,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         cfg = CSConfig()
         for key in wsmsg.data_keys():
             val = wsmsg.data(key)
-            if MULTIUSER and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
+            if SRVR_CFG.multiuser and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
                 # if val is gdrive location, translate it to local drive
                 if val.startswith("gdrive://"):
                     if key == 'output_file':
@@ -247,7 +239,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 
         success = not solver_failed
         
-        if success and MULTIUSER:
+        if success and SRVR_CFG.multiuser:
             wslogger.send_log_msg("uploading results to cloud store...")
             for root, _dirs, files in os.walk(output_folder, topdown=False):
                 for name in files:
@@ -292,7 +284,8 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         return ({'complete': True, 'success': testsPassed}, False)
     
     def handle_logout(self, wsmsg):
-        logger.debug("logging out")
+        logger.debug("logging out " + str(self.sess_id))
+        Session.logout(self.sess_id)
         return ({}, True)
 
     def handle_file_list(self, wsmsg):
@@ -313,8 +306,8 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 class IndexPageHandler(PageHandlerBase):
     def get(self):
         #logger.debug("got request url " + self.request.full_url())
-        global MULTIUSER
-        if MULTIUSER:
+        global SRVR_CFG
+        if SRVR_CFG.multiuser:
             if not Session.validate(self):
                 return
             username = Session.validated_user_name(self);
@@ -322,8 +315,8 @@ class IndexPageHandler(PageHandlerBase):
             txt_shutdown = "Logout"
             txt_shutdown_msg = "Are you sure you want to logout from Circuitscape?"
             filedlg_type = "google"
-            filedlg_developer_key = SERVER_CONFIG.get("cloudCS", "GOOGLE_DEVELOPER_KEY")
-            filedlg_app_id = SERVER_CONFIG.get("cloudCS", "GOOGLE_CLIENT_ID")
+            filedlg_developer_key = SRVR_CFG.cfg_get("GOOGLE_DEVELOPER_KEY")
+            filedlg_app_id = SRVR_CFG.cfg_get("GOOGLE_CLIENT_ID")
             sess_id = Session.extract_session_id(self)
         else:
             userid = username = getpass.getuser()
@@ -339,7 +332,7 @@ class IndexPageHandler(PageHandlerBase):
                   'userid': userid,
                   'version': cs_version,
                   'author': cs_author,
-                  'ws_url': SERVER_WS_URL,
+                  'ws_url': SRVR_CFG.ws_url,
                   'sess_id': sess_id,
                   'txt_shutdown': txt_shutdown,
                   'txt_shutdown_msg': txt_shutdown_msg,
@@ -356,23 +349,24 @@ class IndexPageHandler(PageHandlerBase):
 
 class Application(tornado.web.Application):
     def __init__(self):
+        global SRVR_CFG
         pkgpath, _fname = os.path.split(__file__)
         templates_path = os.path.join(pkgpath, 'templates')
         static_path = os.path.join(pkgpath, 'templates/static')
         ext_path = os.path.join(pkgpath, 'ext')
         handlers = [
             (r'/', IndexPageHandler),
-            (SERVER_WS_PATH, WebSocketHandler),
+            (ServerConfig.SERVER_WS_PATH, WebSocketHandler),
             (r'/static/(.*)', tornado.web.StaticFileHandler, {'path': static_path}),
             (r'/ext/(.*)', tornado.web.StaticFileHandler, {'path': ext_path})
         ]
         
-        if MULTIUSER:
-            Session.SALT = SERVER_CONFIG.get("cloudCS", "SECURE_SALT")
-            SERVER_CONFIG.set("cloudCS", "GOOGLE_STORAGE_AUTH_REDIRECT_URI", SERVER_STORAGE_AUTH_REDIRECT_URI)
-            StorageHandler.init(SERVER_CONFIG) #REDIRECT_URI = SERVER_STORAGE_AUTH_REDIRECT_URI
-            handlers.append((SERVER_LOGIN_AUTH_PATH, AuthHandler))
-            handlers.append((SERVER_STORAGE_AUTH_PATH, StorageHandler))
+        if SRVR_CFG.multiuser:
+            Session.SALT = SRVR_CFG.cfg_get("SECURE_SALT")
+            SRVR_CFG.cfg_set("GOOGLE_STORAGE_AUTH_REDIRECT_URI", SRVR_CFG.storage_auth_redirect_uri)
+            StorageHandler.init(SRVR_CFG)
+            handlers.append((ServerConfig.SERVER_LOGIN_AUTH_PATH, AuthHandler))
+            handlers.append((ServerConfig.SERVER_STORAGE_AUTH_PATH, StorageHandler))
 
         settings = {
             'template_path': templates_path,
@@ -389,29 +383,29 @@ def stop_webserver(from_signal=False):
     else:
         ioloop.add_callback(lambda x: x.stop(), ioloop)
 
-def run_webgui(cfg):
+def run_webgui(config):
+    global SRVR_CFG
     logger.debug('starting up...')
-    global SERVER_WS_URL, SERVER_PORT, MULTIUSER, SERVER_CONFIG
-    
-    SERVER_CONFIG = cfg
-    SERVER_PORT = cfg.getint("cloudCS", "port")
-    MULTIUSER = cfg.getboolean("cloudCS", "multiuser")
-    
+    SRVR_CFG = ServerConfig(config)
+    logger.debug("listening on: " + SRVR_CFG.listen_ip + ':' + str(SRVR_CFG.port))
+    logger.debug("hostname: " + SRVR_CFG.host)
+    logger.debug("multiuser: " + str(SRVR_CFG.multiuser))
+    logger.debug("headless: " + str(SRVR_CFG.headless))
+
     server = tornado.httpserver.HTTPServer(Application())
-    server.listen(SERVER_PORT)
-    SERVER_WS_URL = "ws://" + SERVER_HOST + ':' + str(SERVER_PORT) + SERVER_WS_PATH
-    if not cfg.getboolean("cloudCS", "headless"):
-        webbrowser.open('http://' + SERVER_HOST + ':' + str(SERVER_PORT) + '/')
+    server.listen(SRVR_CFG.port, address=SRVR_CFG.listen_ip)
+    if not SRVR_CFG.headless:
+        webbrowser.open(SRVR_CFG.http_url)
     
     try:
         tornado.ioloop.IOLoop.instance().start()
     except:
         logger.exception("server shutdown with exception")
         
-    logger.debug("cleaning up...")
+    logger.debug("shutting down...")
     try:
         Session.logout_all()
     except:
         logger.exception("exception while cleaning up")
-    logger.debug("shutting down...")
+    logger.debug("server shut down")
 

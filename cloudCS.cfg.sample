@@ -13,6 +13,12 @@ headless=True
 # If False all users of the server are logged in as the user who starts the server and have access to local resources.
 multiuser=True
 
+# Host name of the server (for browsers to connect to)
+host=localhost
+
+# IP address on which to start the server
+listen_ip=0.0.0.0
+
 # Port on which to start the server
 # The server is then accessible over a browser as http://<server name>:port/
 port=8080

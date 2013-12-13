@@ -114,9 +114,9 @@ class GoogleDriveHandler(StorageHandlerBase):
 
     @staticmethod
     def init(cfg):
-        GoogleDriveHandler.CLIENT_ID = cfg.get("cloudCS", "GOOGLE_CLIENT_ID")
-        GoogleDriveHandler.CLIENT_SECRET = cfg.get("cloudCS", "GOOGLE_CLIENT_SECRET")
-        GoogleDriveHandler.REDIRECT_URI = cfg.get("cloudCS", "GOOGLE_STORAGE_AUTH_REDIRECT_URI")
+        GoogleDriveHandler.CLIENT_ID = cfg.cfg_get("GOOGLE_CLIENT_ID")
+        GoogleDriveHandler.CLIENT_SECRET = cfg.cfg_get("GOOGLE_CLIENT_SECRET")
+        GoogleDriveHandler.REDIRECT_URI = cfg.cfg_get("GOOGLE_STORAGE_AUTH_REDIRECT_URI")
         logger.debug("initialized CLIENT_ID=" + GoogleDriveHandler.CLIENT_ID)
         logger.debug("initialized CLIENT_SECRET=" + GoogleDriveHandler.CLIENT_SECRET)
         logger.debug("initialized REDIRECT_URI=" + GoogleDriveHandler.REDIRECT_URI)
