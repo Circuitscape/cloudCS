@@ -209,7 +209,8 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                         wslogger.send_log_msg("preparing cloud store output folder: " + val)
                         output_cloud_folder = val
                         output_folder = os.path.join(self.work_dir, 'output')
-                        os.mkdir(output_folder)
+                        if not os.path.exists(output_folder):
+                            os.mkdir(output_folder)
                         val = os.path.join(output_folder, 'results.out')
                     else:
                         # copy the file locally
@@ -385,8 +386,25 @@ def stop_webserver(from_signal=False):
 
 def run_webgui(config):
     global SRVR_CFG
-    logger.debug('starting up...')
+    global logger
     SRVR_CFG = ServerConfig(config)
+    
+    log_lvl = SRVR_CFG.cfg_get("log_level", str, "DEBUG")
+    log_lvl = getattr(logging, log_lvl)
+    log_file = SRVR_CFG.cfg_get("log_file", str, None)
+    
+    logger = logging.getLogger('cloudCS')
+    logger.setLevel(log_lvl)
+    
+    if log_file:
+        handler = logging.FileHandler(log_file)
+        formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(message)s', '%m/%d/%Y %I.%M.%S.%p')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    else:
+        logging.basicConfig()
+
+    logger.info('starting up...')
     logger.debug("listening on: " + SRVR_CFG.listen_ip + ':' + str(SRVR_CFG.port))
     logger.debug("hostname: " + SRVR_CFG.host)
     logger.debug("multiuser: " + str(SRVR_CFG.multiuser))
@@ -402,10 +420,10 @@ def run_webgui(config):
     except:
         logger.exception("server shutdown with exception")
         
-    logger.debug("shutting down...")
+    logger.info("shutting down...")
     try:
         Session.logout_all()
     except:
         logger.exception("exception while cleaning up")
-    logger.debug("server shut down")
+    logger.info("server shut down")
 
