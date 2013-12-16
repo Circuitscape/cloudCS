@@ -31,6 +31,9 @@ allowed_users=user_list.txt
 # To be effective, this must be a random string, unique for each installation
 SECURE_SALT=change_this_to_a_random_string
 
+# Path where to store temporary files during server execution
+temp_dir=
+
 # Google API keys and secrets
 # These are required to support Google authentication and Google Drive access
 # Can be obtained after registering circuitscape application with Google.

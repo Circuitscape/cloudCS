@@ -1,5 +1,6 @@
-import hashlib, time, logging, tempfile, os
+import hashlib, time, logging, os
 from abc import ABCMeta, abstractmethod
+from common import Utils
 
 logger = logging.getLogger('cloudCS')
 
@@ -15,7 +16,7 @@ class Session:
             raise RuntimeError("user not authorized")
         logger.debug("user " + self.user_id() + " allowed")
         
-        self.local_work_dir = tempfile.mkdtemp()
+        self.local_work_dir = Utils.mkdtemp(prefix="sess_")
         logger.debug("created temporary folder " + self.local_work_dir)
         req.set_secure_cookie(Session.cookie_name, self.sess_id, 1)
         req.redirect('/auth/storage')

@@ -1,4 +1,4 @@
-import os, webbrowser, json, logging, getpass, tempfile, StringIO
+import os, webbrowser, json, logging, getpass, StringIO
 from circuitscape.compute import Compute
 from circuitscape.cfg import CSConfig
 from circuitscape import __version__ as cs_version
@@ -11,7 +11,7 @@ import tornado.httpserver
 import tornado.ioloop
 
 from cfg import ServerConfig
-from common import PageHandlerBase, ErrorHandler
+from common import PageHandlerBase, ErrorHandler, Utils
 from cloudauth import GoogleHandler as AuthHandler
 from session import SessionInMemory as Session
 from cloudstore import GoogleDriveHandler as StorageHandler
@@ -147,12 +147,6 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             else:
                 stop_webserver()
 
-#     def auth(self, wsmsg):
-#         if (not self.is_authenticated) and (wsmsg.msg_type() == WSMsg.REQ_AUTH):
-#             sess_id = wsmsg.data('sess_id')
-#             self.is_authenticated = Session.validate_sess_id(sess_id)
-#         return self.is_authenticated
-
     def handle_auth(self, wsmsg):
         if (not self.is_authenticated) and (wsmsg.msg_type() == WSMsg.REQ_AUTH):
             self.sess_id = wsmsg.data('sess_id')
@@ -258,7 +252,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         strio = StringIO.StringIO()
         try:
             root_path = os.path.dirname(cs_pkg_file)
-            outdir = tempfile.mkdtemp()
+            outdir = Utils.mkdtemp(prefix="verify_")
             if os.path.exists(root_path):
                 root_path = os.path.split(root_path)[0]
                 os.chdir(root_path)     # otherwise we are running inside a packaged folder and resources are availale at cwd
@@ -393,6 +387,7 @@ def run_webgui(config):
     global logger
     SRVR_CFG = ServerConfig(config)
     
+    Utils.temp_files_root = SRVR_CFG.cfg_get("temp_dir", str, None)
     log_lvl = SRVR_CFG.cfg_get("log_level", str, "DEBUG")
     log_lvl = getattr(logging, log_lvl)
     log_file = SRVR_CFG.cfg_get("log_file", str, None)

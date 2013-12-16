@@ -1,4 +1,4 @@
-import traceback
+import traceback, tempfile
 
 from circuitscape import __version__ as cs_version
 from circuitscape import __author__ as cs_author
@@ -26,4 +26,12 @@ class PageHandlerBase(tornado.web.RequestHandler):
 class ErrorHandler(tornado.web.ErrorHandler, PageHandlerBase): 
     def prepare(self): 
         raise tornado.web.HTTPError(self._status_code) 
+
+
+class Utils:
+    temp_files_root = None
+    
+    @staticmethod
+    def mkdtemp(suffix="", prefix=""):
+        return tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=Utils.temp_files_root)
     
