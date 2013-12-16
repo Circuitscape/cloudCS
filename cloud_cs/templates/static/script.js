@@ -147,7 +147,7 @@ function set_form_field(fld_name, fld_val, fld_type) {
 };
 
 function load_cfg(filename) {
-	alert_in_page('Loading configuration from ' + filename, '...', 'info');
+	alert_in_page('Loading configuration from ' + filename + '...', 'info');
 	do_ws(function() {
 			ws_conn.send(JSON.stringify({
 				'msg_type': ws_msg_types.REQ_LOAD_CFG,
@@ -324,6 +324,7 @@ function run_job() {
 			}
 			else if(resp.msg_type == ws_msg_types.RSP_ERROR) {
 				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
+				$('#results_div_close').removeAttr('disabled');
 			}
 		});	
 };
@@ -345,11 +346,18 @@ function run_verify() {
 				if(resp.data.success) {
 					$('#results_div_msg').val('All tests passed.\n' + $('#results_div_msg').val());
 				}
+				else {
+					$('#results_div_msg').val('Tests failed.\n' + $('#results_div_msg').val());
+				}
 				ws_conn.close();
 				$('#results_div_close').removeAttr('disabled');
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
+			}
+			else if(resp.msg_type == ws_msg_types.RSP_ERROR) {
+				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
+				$('#results_div_close').removeAttr('disabled');
 			}
 		});	
 };

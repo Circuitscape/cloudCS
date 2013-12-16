@@ -1,9 +1,14 @@
-import os, webbrowser, json, logging, getpass, StringIO
+import os, webbrowser, getpass, StringIO, logging, json
+from multiprocessing import Process, Queue
+from threading import Thread
+
 from circuitscape.compute import Compute
 from circuitscape.cfg import CSConfig
 from circuitscape import __version__ as cs_version
 from circuitscape import __author__ as cs_author
 from circuitscape import __file__ as cs_pkg_file
+
+from cloudstore import GoogleDriveStore
 
 import tornado.web
 import tornado.websocket
@@ -17,7 +22,6 @@ from session import SessionInMemory as Session
 from cloudstore import GoogleDriveHandler as StorageHandler
 
 SRVR_CFG = None
-
 
 class WebSocketLogger(logging.Handler):
     def __init__(self, dest=None):
@@ -40,7 +44,11 @@ class WebSocketLogger(logging.Handler):
                    'data': msg
         }
         self.dest.write_message(resp_nv, False)
-        
+    
+    def send_log_msg_async(self, msg):
+        ioloop = tornado.ioloop.IOLoop.instance()
+        ioloop.add_callback_from_signal(lambda x: x[0].send_log_msg(x[1]), (self, msg))
+
 
 class WSMsg:
     RSP_ERROR = -1
@@ -64,8 +72,10 @@ class WSMsg:
     REQ_LOAD_CFG = 9
     RSP_LOAD_CFG = 10
     
+    logger = None
     
-    def __init__(self, msg_type=None, msg_nv=None, msg=None):
+    def __init__(self, msg_type=None, msg_nv=None, msg=None, handler=None):
+        self.handler = handler
         if msg:
             self.nv = json.loads(msg)
         else:
@@ -73,7 +83,7 @@ class WSMsg:
                        'msg_type': msg_type,
                        'data': msg_nv
             }
-        logger.debug('received msg_type: %d, data[%s]' % (self.nv['msg_type'], str(self.nv['data'])))
+        WSMsg.logger.debug('received msg_type: %d, data[%s]' % (self.nv['msg_type'], str(self.nv['data'])))
 
     def msg_type(self):
         return self.nv['msg_type']
@@ -84,20 +94,178 @@ class WSMsg:
     def data(self, key, default=None):
         return self.nv['data'].get(key, default);
 
-    def error(self, err_code, sock):
+    def error(self, err_code, sock=None):
         resp_nv = {
                    'msg_type': WSMsg.RSP_ERROR,
                    'data': err_code
         }
+        if sock == None:
+            sock = self.handler
         sock.write_message(resp_nv, False)
 
-    def reply(self, response, sock):
+    def reply(self, response, sock=None):
         resp_nv = {
                    'msg_type': (self.nv['msg_type'] + 1),
                    'data': response
         }
+        if sock == None:
+            sock = self.handler
         sock.write_message(resp_nv, False)
 
+    def reply_async(self, response):
+        ioloop = tornado.ioloop.IOLoop.instance()
+        ioloop.add_callback(lambda x: x[0].reply(x[1]), (self, response))
+
+    def error_async(self, err_code):
+        ioloop = tornado.ioloop.IOLoop.instance()
+        ioloop.add_callback(lambda x: x[0].error(x[1]), (self, err_code))
+
+
+class QueueLogger(logging.Handler):
+    def __init__(self, q):
+        logging.Handler.__init__(self)
+        self.q = q
+        self.level = logging.DEBUG
+
+    def flush(self):
+        pass
+
+    def emit(self, record):
+        msg = self.format(record)
+        msg = msg.strip('\r')
+        msg = msg.strip('\n')
+        self.send_log_msg(msg)
+
+    def send_log_msg(self, msg):
+        self.q.put((WSMsg.SHOW_LOG, msg))
+    
+    def send_result_msg(self, msg_type, ret):
+        self.q.put((msg_type, ret))
+
+    def send_error_msg(self, msg):
+        self.q.put((WSMsg.RSP_ERROR, msg))
+
+
+class CircuitscapeRunner:
+    @staticmethod
+    def async_websock_thread(wslogger, wsmsg, method, *args):
+        t = Thread(target=CircuitscapeRunner.async_websock_method, name="async_websock_method", args=(wslogger, wsmsg, method, args))
+        t.start()
+        return t
+    
+    @staticmethod
+    def async_websock_method(wslogger, wsmsg, method, args):
+        q = Queue()
+        in_msg_type = wsmsg.msg_type()
+        args = list(args)
+        args.insert(0, in_msg_type)
+        args.insert(0, q)
+        p = Process(target=method, args=args)
+        p.start()
+        results = None
+        while (results == None) and p.is_alive():
+            msg_type, msg = q.get()
+            if msg_type == WSMsg.SHOW_LOG:
+                wslogger.send_log_msg_async(msg)
+            elif msg_type == in_msg_type:
+                results = msg
+        p.join()
+        wsmsg.reply_async(results)
+    
+    @staticmethod
+    def run_job(q, msg_type, msg_data, work_dir, storage_creds, multiuser):
+        solver_failed = True
+        output_cloud_folder = None
+        output_folder = None
+        cfg = CSConfig()
+        qlogger = QueueLogger(q)
+        store = GoogleDriveStore(storage_creds)
+        
+        for key in msg_data.keys():
+            val = msg_data[key]
+            if multiuser and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
+                # if val is gdrive location, translate it to local drive
+                if val.startswith("gdrive://"):
+                    if key == 'output_file':
+                        # store the output gdrive folder
+                        qlogger.send_log_msg("preparing cloud store output folder: " + val)
+                        output_cloud_folder = val
+                        output_folder = os.path.join(work_dir, 'output')
+                        if not os.path.exists(output_folder):
+                            os.mkdir(output_folder)
+                        val = os.path.join(output_folder, 'results.out')
+                    else:
+                        # copy the file locally
+                        qlogger.send_log_msg("reading from cloud store: " + val)
+                        val = store.copy_to_local(val, work_dir)
+            cfg.__setattr__(key, val)
+        
+        qlogger.send_log_msg("verifying configuration...")
+        (all_options_entered, message) = cfg.check()
+        if not all_options_entered:
+            qlogger.send_error_msg(message)
+        else:
+            # In cloud mode, this would be a temporary directory
+            outdir, _out_file = os.path.split(cfg.output_file)
+            
+            try:
+                qlogger.send_log_msg("storing final configuration...")
+                configFile = os.path.join(outdir, 'circuitscape.ini')
+                cfg.write(configFile)
+    
+                cs = Compute(configFile, qlogger)
+                result, solver_failed = cs.compute()
+                qlogger.send_log_msg("result: \n" + str(result))
+            except Exception as e:
+                message = str(e)
+                qlogger.send_error_msg(message)
+
+        success = not solver_failed
+        
+        if success and multiuser:
+            qlogger.send_log_msg("uploading results to cloud store...")
+            for root, _dirs, files in os.walk(output_folder, topdown=False):
+                for name in files:
+                    outfile = os.path.join(root, name)
+                    qlogger.send_log_msg("uploading " + name + "...")
+                    store.copy_to_remote(output_cloud_folder, outfile)
+            qlogger.send_log_msg("uploaded results to cloud store")
+        
+        qlogger.send_result_msg(msg_type, {'complete': True, 'success': success})
+                    
+    
+    @staticmethod
+    def run_verify(q, msg_type):
+        outdir = None
+        cwd = os.getcwd()
+        strio = StringIO.StringIO()
+        qlogger = QueueLogger(q)
+        try:
+            root_path = os.path.dirname(cs_pkg_file)
+            outdir = Utils.mkdtemp(prefix="verify_")
+            if os.path.exists(root_path):
+                root_path = os.path.split(root_path)[0]
+                os.chdir(root_path)     # otherwise we are running inside a packaged folder and resources are availale at cwd
+            from circuitscape.verify import cs_verifyall
+            testResult = cs_verifyall(out_path=outdir, ext_logger=qlogger, stream=strio)
+            testsPassed = testResult.wasSuccessful()
+        except Exception as e:
+            qlogger.send_log_msg("Error during verify: " + str(e))
+            testsPassed = False
+        finally:
+            os.chdir(cwd)
+            if None != outdir:
+                for root, dirs, files in os.walk(outdir, topdown=False):
+                    for name in files:
+                        os.remove(os.path.join(root, name))
+                    for name in dirs:
+                        os.rmdir(os.path.join(root, name))
+                os.rmdir(outdir)
+
+        qlogger.send_log_msg(strio.getvalue())
+        strio.close()
+        qlogger.send_result_msg(msg_type, {'complete': True, 'success': testsPassed})
+    
 
 class WebSocketHandler(tornado.websocket.WebSocketHandler):
     def open(self):
@@ -116,7 +284,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         global SRVR_CFG
         #logger.debug("got request url " + self.request.full_url())
         logger.debug("websocket message received [%s]"%(str(message),))
-        wsmsg = WSMsg(msg=message)
+        wsmsg = WSMsg(msg=message, handler=self)
         is_shutdown_msg = False
         response = {}
         try:
@@ -133,11 +301,12 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                     response, is_shutdown_msg = self.handle_run_job(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
                     response, is_shutdown_msg = self.handle_load_config(wsmsg)
-                
-            wsmsg.reply(response, self)
+
+            if response:                
+                wsmsg.reply(response)
         except Exception:
             logger.exception("Exception handling message of type %d"%(wsmsg.msg_type(),))
-            wsmsg.error(-1, self)
+            wsmsg.error(-1)
             
         if is_shutdown_msg:
             if SRVR_CFG.multiuser:
@@ -185,98 +354,20 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         logger.debug("returning config [" + str(result) + "]")
         return ({'cfg': result, 'success': success}, False)
 
+
     def handle_run_job(self, wsmsg):
         global SRVR_CFG
-        wslogger = WebSocketLogger(self)        
-        solver_failed = True
-        output_cloud_folder = None
-        output_folder = None
-        cfg = CSConfig()
-        for key in wsmsg.data_keys():
-            val = wsmsg.data(key)
-            if SRVR_CFG.multiuser and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
-                # if val is gdrive location, translate it to local drive
-                if val.startswith("gdrive://"):
-                    if key == 'output_file':
-                        # store the output gdrive folder
-                        wslogger.send_log_msg("preparing cloud store output folder: " + val)
-                        output_cloud_folder = val
-                        output_folder = os.path.join(self.work_dir, 'output')
-                        if not os.path.exists(output_folder):
-                            os.mkdir(output_folder)
-                        val = os.path.join(output_folder, 'results.out')
-                    else:
-                        # copy the file locally
-                        wslogger.send_log_msg("reading from cloud store: " + val)
-                        val = self.store.copy_to_local(val, self.work_dir)
-            cfg.__setattr__(key, val)
-        
-        wslogger.send_log_msg("verifying configuration...")
-        (all_options_entered, message) = cfg.check()
-        if not all_options_entered:
-            wsmsg.error(message, self)
-        else:
-            # In cloud mode, this would be a temporary directory
-            outdir, _out_file = os.path.split(cfg.output_file)
-            
-            try:
-                wslogger.send_log_msg("storing final configuration...")
-                configFile = os.path.join(outdir, 'circuitscape.ini')
-                cfg.write(configFile)
-    
-                cs = Compute(configFile, wslogger)
-                result, solver_failed = cs.compute()
-                wslogger.send_log_msg("result: \n" + str(result))
-            except Exception as e:
-                message = str(e)
-                wsmsg.error(message, self)
+        wslogger = WebSocketLogger(self)
+        CircuitscapeRunner.async_websock_thread(wslogger, wsmsg, CircuitscapeRunner.run_job, wsmsg.nv['data'], self.work_dir, self.storage_creds, SRVR_CFG.multiuser)
+        return (None, False)
 
-        success = not solver_failed
-        
-        if success and SRVR_CFG.multiuser:
-            wslogger.send_log_msg("uploading results to cloud store...")
-            for root, _dirs, files in os.walk(output_folder, topdown=False):
-                for name in files:
-                    outfile = os.path.join(root, name)
-                    wslogger.send_log_msg("uploading " + name + "...")
-                    self.store.copy_to_remote(output_cloud_folder, outfile)
-            wslogger.send_log_msg("uploaded results to cloud store")
-            
-        return ({'complete': True, 'success': success}, False)
-            
-        
 
     def handle_run_verify(self, wsmsg):
-        outdir = None
-        cwd = os.getcwd()
-        strio = StringIO.StringIO()
-        try:
-            root_path = os.path.dirname(cs_pkg_file)
-            outdir = Utils.mkdtemp(prefix="verify_")
-            if os.path.exists(root_path):
-                root_path = os.path.split(root_path)[0]
-                os.chdir(root_path)     # otherwise we are running inside a packaged folder and resources are availale at cwd
-            wslogger = WebSocketLogger(self)
-            from circuitscape.verify import cs_verifyall
-            testResult = cs_verifyall(out_path=outdir, ext_logger=wslogger, stream=strio)
-            testsPassed = testResult.wasSuccessful()
-        except:
-            testsPassed = False
-        finally:
-            os.chdir(cwd)
-            if None != outdir:
-                for root, dirs, files in os.walk(outdir, topdown=False):
-                    for name in files:
-                        os.remove(os.path.join(root, name))
-                    for name in dirs:
-                        os.rmdir(os.path.join(root, name))
-                os.rmdir(outdir)
+        wslogger = WebSocketLogger(self)
+        CircuitscapeRunner.async_websock_thread(wslogger, wsmsg, CircuitscapeRunner.run_verify)
+        return (None, False)
 
-        wslogger.send_log_msg(strio.getvalue())
-        strio.close()
-                
-        return ({'complete': True, 'success': testsPassed}, False)
-    
+
     def handle_logout(self, wsmsg):
         logger.debug("logging out " + str(self.sess_id))
         if self.sess != None:
@@ -387,6 +478,7 @@ def run_webgui(config):
     global logger
     SRVR_CFG = ServerConfig(config)
     
+    Utils.srvr_cfg = SRVR_CFG
     Utils.temp_files_root = SRVR_CFG.cfg_get("temp_dir", str, None)
     log_lvl = SRVR_CFG.cfg_get("log_level", str, "DEBUG")
     log_lvl = getattr(logging, log_lvl)
@@ -409,6 +501,7 @@ def run_webgui(config):
     logger.debug("multiuser: " + str(SRVR_CFG.multiuser))
     logger.debug("headless: " + str(SRVR_CFG.headless))
 
+    WSMsg.logger = logger
     server = tornado.httpserver.HTTPServer(Application())
     server.listen(SRVR_CFG.port, address=SRVR_CFG.listen_ip)
     if not SRVR_CFG.headless:
