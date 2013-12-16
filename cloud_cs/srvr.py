@@ -141,7 +141,9 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             
         if is_shutdown_msg:
             if SRVR_CFG.multiuser:
-                Session.logout(wsmsg.data('sess_id'))
+                if self.sess != None:
+                    self.sess.logout()
+                    self.sess = None
             else:
                 stop_webserver()
 
@@ -154,10 +156,11 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
     def handle_auth(self, wsmsg):
         if (not self.is_authenticated) and (wsmsg.msg_type() == WSMsg.REQ_AUTH):
             self.sess_id = wsmsg.data('sess_id')
-            self.is_authenticated = Session.validate_sess_id(self.sess_id)
+            self.sess = sess = Session.get_session(self.sess_id)
+            self.is_authenticated = (sess != None)
             if self.is_authenticated:
-                self.work_dir = Session.work_dir(self.sess_id)
-                self.storage_creds, self.store = Session.get_storage(self.sess_id)
+                self.work_dir = sess.work_dir()
+                self.storage_creds, self.store = sess.storage()
             return ({'success': self.is_authenticated}, not self.is_authenticated)
         return (None, not self.is_authenticated)
         
@@ -282,7 +285,9 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
     
     def handle_logout(self, wsmsg):
         logger.debug("logging out " + str(self.sess_id))
-        Session.logout(self.sess_id)
+        if self.sess != None:
+            self.sess.logout()
+            self.sess = None
         return ({}, True)
 
     def handle_file_list(self, wsmsg):
@@ -305,16 +310,19 @@ class IndexPageHandler(PageHandlerBase):
         #logger.debug("got request url " + self.request.full_url())
         global SRVR_CFG
         if SRVR_CFG.multiuser:
-            if not Session.validate(self):
+            self.sess_id = sess_id = Session.extract_session_id(self)
+            self.sess = sess = Session.get_session(sess_id)
+            if self.sess == None:
+                logger.debug("redirecting request for authentication")
+                self.redirect('/auth/login')
                 return
-            username = Session.validated_user_name(self);
-            userid = Session.validated_user_id(self);
+            username = sess.user_name()
+            userid = sess.user_id()
             txt_shutdown = "Logout"
             txt_shutdown_msg = "Are you sure you want to logout from Circuitscape?"
             filedlg_type = "google"
             filedlg_developer_key = SRVR_CFG.cfg_get("GOOGLE_DEVELOPER_KEY")
             filedlg_app_id = SRVR_CFG.cfg_get("GOOGLE_CLIENT_ID")
-            sess_id = Session.extract_session_id(self)
         else:
             userid = username = getpass.getuser()
             txt_shutdown = "Shutdown"
@@ -359,7 +367,7 @@ class Application(tornado.web.Application):
         ]
         
         if SRVR_CFG.multiuser:
-            Session.set_cfg(SRVR_CFG)
+            Session.srvr_cfg = SRVR_CFG
             SRVR_CFG.cfg_set("GOOGLE_STORAGE_AUTH_REDIRECT_URI", SRVR_CFG.storage_auth_redirect_uri)
             StorageHandler.init(SRVR_CFG)
             handlers.append((ServerConfig.SERVER_LOGIN_AUTH_PATH, AuthHandler))

@@ -1,21 +1,23 @@
 import hashlib, time, logging, tempfile, os
+from abc import ABCMeta, abstractmethod
 
 logger = logging.getLogger('cloudCS')
 
 class Session:
-    COOKIE_NAME = "cloudcs_sess"
-    SRVR_CFG = None
-        
+    __metaclass__ = ABCMeta
+    
+    cookie_name = "cloudcs_sess"
+
     def auth_valid(self, req):
         self.local_work_dir = None
         logger.info("authenticated " + self.user_id())
-        if not self.get_cfg().is_user_allowed(self.user_id()):
+        if not self.cfg().is_user_allowed(self.user_id()):
             raise RuntimeError("user not authorized")
         logger.debug("user " + self.user_id() + " allowed")
         
         self.local_work_dir = tempfile.mkdtemp()
         logger.debug("created temporary folder " + self.local_work_dir)
-        req.set_secure_cookie(Session.COOKIE_NAME, self.sess_id, 1)
+        req.set_secure_cookie(Session.cookie_name, self.sess_id, 1)
         req.redirect('/auth/storage')
 
     def remove_temporary_files(self):
@@ -29,66 +31,52 @@ class Session:
             os.rmdir(outdir)
             logger.debug("removed temporary folder " + outdir)
 
-    @classmethod
-    def set_cfg(cls, cfg):
-        cls.SRVR_CFG = cfg
+    @staticmethod
+    def extract_session_id(req):
+        return req.get_secure_cookie(Session.cookie_name)
 
-    @classmethod
-    def get_cfg(cls):
-        return cls.SRVR_CFG
+    @abstractmethod
+    def cfg(self):
+        raise NotImplementedError
 
-    @classmethod
-    def work_dir(cls, sess_id):
-        sess = cls.get_session(sess_id)
-        return sess.local_work_dir
+    @abstractmethod
+    def get_session(self, sess_id):
+        raise NotImplementedError
+
+    @abstractmethod
+    def user_id(self):
+        raise NotImplementedError
     
-    @classmethod
-    def storage_auth_valid(cls, req, credentials, store):
-        sess_id = cls.extract_session_id(req)
-        sess = cls.get_session(sess_id)
-        sess.set('storage_creds', credentials)
-        sess.set('store', store)
+    @abstractmethod
+    def user_name(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def set(self, attrib_name, attrib_val):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def get(self, attrib_name, default=None):
+        raise NotImplementedError
+
+    @abstractmethod
+    def logout(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def logout_all(self):
+        raise NotImplementedError
+
+    def work_dir(self):
+        return self.local_work_dir
+    
+    def storage_auth_valid(self, req, credentials, store):
+        self.set('storage_creds', credentials)
+        self.set('store', store)
         req.redirect('/')
 
-    @classmethod
-    def validated_user_id(cls, req):
-        return cls.get_session(cls.extract_session_id(req)).user_id()
-    
-    @classmethod
-    def validated_user_name(cls, req):
-        return cls.get_session(cls.extract_session_id(req)).user_name()
-    
-    @classmethod
-    def extract_session_id(cls, req):
-        return req.get_secure_cookie(Session.COOKIE_NAME)
-
-    @classmethod
-    def get_storage(cls, sess_id):
-        sess = cls.get_session(sess_id)
-        return (sess.get('storage_creds'), sess.get('store'))
-    
-    @classmethod
-    def validate(cls, req):
-        logger.debug("validating request")
-        valid = False
-        try:
-            sess_id = cls.extract_session_id(req)
-            valid = cls.validate_sess_id(sess_id)
-        except Exception:
-            logger.exception("Exception in validating")
-        finally:
-            if not valid:
-                logger.debug("redirecting request for authentication")
-                req.redirect('/auth/login')
-                return False
-            return True
-
-    @classmethod
-    def validate_sess_id(cls, sess_id):
-        logger.debug('validating sess_id ' + str(sess_id))
-        sess = cls.get_session(sess_id) if (sess_id != None) else None
-        #logger.debug('sess = ' + str(sess) + " for sess_id " + sess_id)
-        return (sess != None)
+    def storage(self):
+        return (self.get('storage_creds'), self.get('store'))
 
 
 
@@ -99,7 +87,7 @@ class SessionInMemory(Session):
         self.user = user
         self.uid = user['email']
         self.creation_time = time.time()
-        self.sess_id = hashlib.sha1('_'.join([self.uid, SessionInMemory.get_cfg().cfg_get("SECURE_SALT"), str(self.creation_time)])).hexdigest()
+        self.sess_id = hashlib.sha1('_'.join([self.uid, self.cfg().cfg_get("SECURE_SALT"), str(self.creation_time)])).hexdigest()
         self.nv = {}
         SessionInMemory.SESS_STORE[self.sess_id] = self
         logger.debug("created session for " + self.uid + " with key " + self.sess_id)
@@ -116,28 +104,30 @@ class SessionInMemory(Session):
     def get(self, attrib_name, default=None):
         return self.nv.get(attrib_name, default)
 
-    @classmethod
-    def is_valid(cls, sess_id):
+    @staticmethod
+    def cfg():
+        return SessionInMemory.srvr_cfg
+    
+    @staticmethod
+    def _is_valid(sess_id):
         return (sess_id in SessionInMemory.SESS_STORE.keys())
 
-    @classmethod
-    def get_session(cls, sess_id):
+    @staticmethod
+    def get_session(sess_id):
         sess = None
-        if SessionInMemory.is_valid(sess_id):
+        if SessionInMemory._is_valid(sess_id):
             sess = SessionInMemory.SESS_STORE[sess_id]
         else:
             logger.error("session id " + str(sess_id) + " not found")            
         return sess
 
-    @classmethod
-    def logout(cls, sess_id):
-        if sess_id:
-            logger.info("logging out " + str(sess_id))
-            sess = SessionInMemory.SESS_STORE[sess_id]
-            sess.remove_temporary_files() #TODO: make facility to allow offline processing even after user logs out
-            del SessionInMemory.SESS_STORE[sess_id]
+    def logout(self):
+        logger.info("logging out " + self.sess_id)
+        self.remove_temporary_files() #TODO: make facility to allow offline processing even after user logs out
+        if self.sess_id in SessionInMemory.SESS_STORE.keys():
+            del SessionInMemory.SESS_STORE[self.sess_id]
 
-    @classmethod
-    def logout_all(cls):
-        for sess_id in SessionInMemory.SESS_STORE.keys():
-            cls.logout(sess_id)
+    @staticmethod
+    def logout_all():
+        for sess in SessionInMemory.SESS_STORE.values():
+            sess.logout()

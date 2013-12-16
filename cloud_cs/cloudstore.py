@@ -1,4 +1,5 @@
 import logging, httplib2, os, tempfile, codecs
+from abc import ABCMeta, abstractmethod
 
 import tornado.web
 import tornado.gen
@@ -13,15 +14,19 @@ from session import SessionInMemory as Session
 logger = logging.getLogger('cloudCS')
 
 class CloudStore:
+    __metaclass__ = ABCMeta
     
+    @abstractmethod
     def __init__(self, creds):
-        pass
+        raise NotImplementedError
     
+    @abstractmethod
     def copy_to_local(self, file_path, local_path):
-        pass
+        raise NotImplementedError
 
+    @abstractmethod
     def copy_to_remote(self, file_path, local_path):
-        pass
+        raise NotImplementedError
     
     
 
@@ -30,10 +35,13 @@ class StorageHandlerBase(PageHandlerBase):
         if not creds:
             raise tornado.web.HTTPError(500, "Storage auth failed")
         logger.debug("storage authenticated for with credentials " + creds.to_json())
-        Session.storage_auth_valid(self, creds, store)
+        sess_id = Session.extract_session_id(self)
+        sess = Session.get_session(sess_id)
+        sess.storage_auth_valid(self, creds, store)
 
     def get_error_html(self, status_code, **kwargs):
         return self.generic_get_error_html(status_code, message="Could not authenticate you to cloud storage.")
+
 
 class GoogleDriveStore(CloudStore):
     def __init__(self, creds):
@@ -103,6 +111,7 @@ class GoogleDriveStore(CloudStore):
         except:
             logger.exception("error uploading local file " + local_path + " to gdrive")
             return None
+
 
 class GoogleDriveHandler(StorageHandlerBase):
     OAUTH_SCOPE = 'https://www.googleapis.com/auth/drive'
