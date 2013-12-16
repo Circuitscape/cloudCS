@@ -18,10 +18,6 @@ from cloudstore import GoogleDriveHandler as StorageHandler
 
 SRVR_CFG = None
 
-logging.basicConfig()
-logger = logging.getLogger('cloudCS')
-logger.setLevel(logging.DEBUG)
-
 
 class WebSocketLogger(logging.Handler):
     def __init__(self, dest=None):

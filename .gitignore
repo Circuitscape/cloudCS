@@ -4,4 +4,3 @@ cloud_cs/*.pyc
 .pydevproject
 *.cfg
 *.log
-*.txt
