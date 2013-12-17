@@ -148,30 +148,46 @@ class QueueLogger(logging.Handler):
 
 
 class CircuitscapeRunner:
-    @staticmethod
-    def async_websock_thread(wslogger, wsmsg, method, *args):
-        t = Thread(target=CircuitscapeRunner.async_websock_method, name="async_websock_method", args=(wslogger, wsmsg, method, args))
-        t.start()
-        return t
+
+    def process_q_async(self):
+        try:
+            while (self.results == None) or self.p.is_alive() or (not self.q.empty()):
+                msg_type, msg = self.q.get(False)
+                if msg_type == WSMsg.SHOW_LOG:
+                    self.wslogger.send_log_msg(msg)
+                elif msg_type == self.in_msg_type:
+                    self.results = msg
+            
+            if not self.p.is_alive():
+                self.p.join()
+                
+                if self.results:
+                    self.wsmsg.reply(self.results)
+                self.timer.stop()
+        except:
+            pass
+        
     
     @staticmethod
-    def async_websock_method(wslogger, wsmsg, method, args):
+    def async_websock_method(wslogger, wsmsg, method, *args):
         q = Queue()
         in_msg_type = wsmsg.msg_type()
+        
         args = list(args)
         args.insert(0, in_msg_type)
         args.insert(0, q)
-        p = Process(target=method, args=args)
-        p.start()
-        results = None
-        while (results == None) and p.is_alive():
-            msg_type, msg = q.get()
-            if msg_type == WSMsg.SHOW_LOG:
-                wslogger.send_log_msg_async(msg)
-            elif msg_type == in_msg_type:
-                results = msg
-        p.join()
-        wsmsg.reply_async(results)
+
+        runner = CircuitscapeRunner()
+        runner.results = None
+        runner.p = Process(target=method, args=args)
+        runner.q = q
+        runner.in_msg_type = in_msg_type
+        runner.wslogger = wslogger
+        runner.wsmsg = wsmsg
+        runner.p.start()
+        runner.timer = tornado.ioloop.PeriodicCallback(lambda: runner.process_q_async(), 1000)
+        runner.process_q_async()
+        runner.timer.start()
     
     @staticmethod
     def run_job(q, msg_type, msg_data, work_dir, storage_creds, multiuser):
@@ -310,7 +326,8 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
                     response, is_shutdown_msg = self.handle_load_config(wsmsg)
 
-            if response:                
+            if response != None:
+                logger.debug("responding with message: " + str(response))
                 wsmsg.reply(response)
         except Exception:
             logger.exception("Exception handling message of type %d"%(wsmsg.msg_type(),))
@@ -366,18 +383,17 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
     def handle_run_job(self, wsmsg):
         global SRVR_CFG
         wslogger = WebSocketLogger(self)
-        CircuitscapeRunner.async_websock_thread(wslogger, wsmsg, CircuitscapeRunner.run_job, wsmsg.nv['data'], self.work_dir, self.storage_creds, SRVR_CFG.multiuser)
+        CircuitscapeRunner.async_websock_method(wslogger, wsmsg, CircuitscapeRunner.run_job, wsmsg.nv['data'], self.work_dir, self.storage_creds, SRVR_CFG.multiuser)
         return (None, False)
 
 
     def handle_run_verify(self, wsmsg):
         wslogger = WebSocketLogger(self)
-        CircuitscapeRunner.async_websock_thread(wslogger, wsmsg, CircuitscapeRunner.run_verify)
+        CircuitscapeRunner.async_websock_method(wslogger, wsmsg, CircuitscapeRunner.run_verify)
         return (None, False)
 
 
     def handle_logout(self, wsmsg):
-        logger.debug("logging out " + str(self.sess_id))
         if self.sess != None:
             self.sess.logout()
             self.sess = None
