@@ -1,4 +1,4 @@
-import traceback, tempfile
+import traceback, tempfile, os, hashlib, pickle
 
 from circuitscape import __version__ as cs_version
 from circuitscape import __author__ as cs_author
@@ -34,4 +34,34 @@ class Utils:
     @staticmethod
     def mkdtemp(suffix="", prefix=""):
         return tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=Utils.temp_files_root)
+
+    @staticmethod
+    def hash(*args):
+        return hashlib.sha1('_'.join(args)).hexdigest()
     
+    #TODO: handle revoke conditions
+    @staticmethod
+    def stash_storage_creds(sec_salt, uid, creds):
+        uid_hash = Utils.hash(uid, sec_salt)
+        # TODO: encrypt contents
+        filename = os.path.join(Utils.creds_store_path(), uid_hash)
+        with open(filename, 'wb') as f:
+            pickle.dump(creds, f)
+    
+    @staticmethod
+    def retrieve_storage_creds(sec_salt, uid):
+        uid_hash = Utils.hash(uid, sec_salt)
+        # TODO: encrypt contents
+        filename = os.path.join(Utils.creds_store_path(), uid_hash)
+        result = None
+        if os.path.exists(filename):
+            with open(filename, 'rb') as f:
+                result = pickle.load(f)
+        return result
+    
+    @staticmethod
+    def creds_store_path():
+        creds_path = os.path.join(Utils.temp_files_root, 'creds')
+        if not os.path.exists(creds_path):
+            os.mkdir(creds_path)
+        return creds_path 

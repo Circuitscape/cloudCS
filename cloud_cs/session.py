@@ -19,8 +19,9 @@ class Session:
         self.local_work_dir = Utils.mkdtemp(prefix="sess_")
         logger.debug("created temporary folder " + self.local_work_dir)
         req.set_secure_cookie(Session.cookie_name, self.sess_id, 1)
-        req.redirect('/auth/storage')
-
+        
+        req.redirect('/auth/storage?uid=' + self.user_id())
+            
     def remove_temporary_files(self):
         outdir = self.local_work_dir
         if None != outdir:

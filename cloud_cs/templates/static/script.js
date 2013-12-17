@@ -161,7 +161,7 @@ function load_cfg(filename) {
 					populate_config(resp.data.cfg);
 				}
 				else {
-					alert_in_page(resp.data.cfg, 'danger');
+					alert_in_page('Error loading configuration. ' + resp.data.cfg, 'danger');
 				}
 				ws_conn.close();
 			}
@@ -207,6 +207,12 @@ function populate_config(cfg) {
 	
 	if(cfg.scenario == 'pairwise') {
 		num_parallel_procs = set_form_field('num_parallel_procs', cfg.parallelize ? cfg.max_parallel : '1');
+		if(cfg.parallelize && (cfg.max_parallel == 0)) {
+			set_form_field('use_max_parallel', true, 'checkbox');
+		}
+		else {
+			set_form_field('use_max_parallel', false, 'checkbox');
+		}
 		set_form_field('low_memory_mode', cfg.low_memory_mode, 'checkbox');
 	}
 	set_form_field('preemptive_memory_release', cfg.preemptive_memory_release, 'checkbox');
@@ -286,7 +292,7 @@ function run_job() {
 	
 	if(cfg.scenario == 'pairwise') {
 		num_parallel_procs = get_form_field('num_parallel_procs');
-		if(num_parallel_procs > 1) {
+		if(num_parallel_procs != 1) {
 			cfg.parallelize = true;
 			cfg.max_parallel = parseInt(num_parallel_procs);
 		}
@@ -425,5 +431,9 @@ function init_circuitscape(ws_url, sess_id) {
 	
 	$('#btn_run').click(function(e){
 		run_job();
+	});
+	
+	$('#use_max_parallel').click(function(e){
+		set_form_field('num_parallel_procs', '0');
 	});
 };

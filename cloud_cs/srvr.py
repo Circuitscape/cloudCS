@@ -20,6 +20,7 @@ from common import PageHandlerBase, ErrorHandler, Utils
 from cloudauth import GoogleHandler as AuthHandler
 from session import SessionInMemory as Session
 from cloudstore import GoogleDriveHandler as StorageHandler
+from apiclient.http import HttpError
 
 SRVR_CFG = None
 
@@ -350,7 +351,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             success = True
         except Exception as e:
             logger.exception("Error reading configuration from %s"%(wsmsg.data('filename'),))
-            result = str(e)
+            result = 'HttpError' if isinstance(e, HttpError) else 'UnknownError'
         logger.debug("returning config [" + str(result) + "]")
         return ({'cfg': result, 'success': success}, False)
 
