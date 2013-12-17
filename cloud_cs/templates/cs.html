@@ -73,7 +73,7 @@
 
 			<!-- Begin page content -->
 			<div class="container">
-				<div class="alert alert-dismissable" id="in_page_alert">
+				<div class="alert alert-dismissable" id="in_page_alert" style="display: none;">
 				  <button type="button" class="close" aria-hidden="true" onclick="$('#in_page_alert').hide()">&times;</button>
 				  <div id="in_page_alert_msg"> </div>
 				</div>				
@@ -308,6 +308,7 @@
 									<label class="col-sm-2 control-label">Parallel Processors</label>
 									<div class="col-sm-10 controls">
 										<input type="text" id="num_parallel_procs"/>
+										<input type="checkbox" id="use_max_parallel"> Use maximum possible<br/>
 										<p class="help-block">select how many parallel processors to use</p>
 									</div>
 								</div>

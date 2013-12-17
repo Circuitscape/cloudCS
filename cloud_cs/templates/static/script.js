@@ -147,7 +147,7 @@ function set_form_field(fld_name, fld_val, fld_type) {
 };
 
 function load_cfg(filename) {
-	alert_in_page('Loading configuration from ' + filename, '...', 'info');
+	alert_in_page('Loading configuration from ' + filename + '...', 'info');
 	do_ws(function() {
 			ws_conn.send(JSON.stringify({
 				'msg_type': ws_msg_types.REQ_LOAD_CFG,
@@ -161,7 +161,7 @@ function load_cfg(filename) {
 					populate_config(resp.data.cfg);
 				}
 				else {
-					alert_in_page(resp.data.cfg, 'danger');
+					alert_in_page('Error loading configuration. ' + resp.data.cfg, 'danger');
 				}
 				ws_conn.close();
 			}
@@ -207,6 +207,12 @@ function populate_config(cfg) {
 	
 	if(cfg.scenario == 'pairwise') {
 		num_parallel_procs = set_form_field('num_parallel_procs', cfg.parallelize ? cfg.max_parallel : '1');
+		if(cfg.parallelize && (cfg.max_parallel == 0)) {
+			set_form_field('use_max_parallel', true, 'checkbox');
+		}
+		else {
+			set_form_field('use_max_parallel', false, 'checkbox');
+		}
 		set_form_field('low_memory_mode', cfg.low_memory_mode, 'checkbox');
 	}
 	set_form_field('preemptive_memory_release', cfg.preemptive_memory_release, 'checkbox');
@@ -286,7 +292,7 @@ function run_job() {
 	
 	if(cfg.scenario == 'pairwise') {
 		num_parallel_procs = get_form_field('num_parallel_procs');
-		if(num_parallel_procs > 1) {
+		if(num_parallel_procs != 1) {
 			cfg.parallelize = true;
 			cfg.max_parallel = parseInt(num_parallel_procs);
 		}
@@ -324,6 +330,7 @@ function run_job() {
 			}
 			else if(resp.msg_type == ws_msg_types.RSP_ERROR) {
 				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
+				$('#results_div_close').removeAttr('disabled');
 			}
 		});	
 };
@@ -345,11 +352,18 @@ function run_verify() {
 				if(resp.data.success) {
 					$('#results_div_msg').val('All tests passed.\n' + $('#results_div_msg').val());
 				}
+				else {
+					$('#results_div_msg').val('Tests failed.\n' + $('#results_div_msg').val());
+				}
 				ws_conn.close();
 				$('#results_div_close').removeAttr('disabled');
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
+			}
+			else if(resp.msg_type == ws_msg_types.RSP_ERROR) {
+				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
+				$('#results_div_close').removeAttr('disabled');
 			}
 		});	
 };
@@ -416,6 +430,11 @@ function init_circuitscape(ws_url, sess_id) {
 	});
 	
 	$('#btn_run').click(function(e){
+		$('#in_page_alert').hide();
 		run_job();
+	});
+	
+	$('#use_max_parallel').click(function(e){
+		set_form_field('num_parallel_procs', '0');
 	});
 };

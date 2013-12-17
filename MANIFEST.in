@@ -1,0 +1,4 @@
+include *.txt
+include docs *.txt
+recursive-include circuitscape/ext *.*
+recursive-include circuitscape/templates *.*

@@ -1,4 +1,5 @@
 import logging, httplib2, os, tempfile, codecs
+from abc import ABCMeta, abstractmethod
 
 import tornado.web
 import tornado.gen
@@ -7,33 +8,55 @@ from apiclient.discovery import build
 from apiclient.http import MediaFileUpload
 from oauth2client.client import OAuth2WebServerFlow
 
-from common import PageHandlerBase
+from common import PageHandlerBase, Utils
 from session import SessionInMemory as Session
 
 logger = logging.getLogger('cloudCS')
 
 class CloudStore:
+    __metaclass__ = ABCMeta
     
+    @abstractmethod
     def __init__(self, creds):
-        pass
+        raise NotImplementedError
     
+    @abstractmethod
     def copy_to_local(self, file_path, local_path):
-        pass
+        raise NotImplementedError
 
+    @abstractmethod
     def copy_to_remote(self, file_path, local_path):
-        pass
+        raise NotImplementedError
     
     
 
 class StorageHandlerBase(PageHandlerBase):
-    def _on_auth(self, creds, store):
+    SEC_SALT = ''
+    
+    def _get_stashed_creds(self):
+        uid = self.get_argument("uid", None)
+        credentials = None
+        if uid != None:
+            # try to retrieve storage authorization from database
+            credentials = Utils.retrieve_storage_creds(StorageHandlerBase.SEC_SALT, uid)
+        if None != credentials:
+            logger.debug("retrieved stashed credentials")
+        return (uid, credentials)
+        
+    def _on_auth(self, uid, creds, store):
         if not creds:
             raise tornado.web.HTTPError(500, "Storage auth failed")
         logger.debug("storage authenticated for with credentials " + creds.to_json())
-        Session.storage_auth_valid(self, creds, store)
+        sess_id = Session.extract_session_id(self)
+        sess = Session.get_session(sess_id)
+        sess.storage_auth_valid(self, creds, store)
+        if uid != None:
+            logger.debug("stashed credentials")
+            Utils.stash_storage_creds(GoogleDriveHandler.SEC_SALT, uid, creds)
 
     def get_error_html(self, status_code, **kwargs):
         return self.generic_get_error_html(status_code, message="Could not authenticate you to cloud storage.")
+
 
 class GoogleDriveStore(CloudStore):
     def __init__(self, creds):
@@ -56,24 +79,39 @@ class GoogleDriveStore(CloudStore):
              
         drive_file = self.service.files().get(fileId=file_id).execute()
         download_url = drive_file.get('downloadUrl')
+        mime_type = drive_file.get('mimeType')
+        logger.debug("file mime type: " + mime_type)
         if not download_url:
+            logger.debug("looking for exportLinks as downloadUrl was not found")
             export_links = drive_file.get('exportLinks')
             if export_links:
                 download_url = export_links.get('text/plain')
-            
+        
         if download_url:
-            logger.debug("downdloading " + download_url) 
+            logger.debug("downloading " + download_url) 
             resp, content = self.service._http.request(download_url)
             if resp.status == 200:
                 logger.debug("downdload status " + str(resp.status) + " for " + download_url)
+                
+                file_is_binary = (mime_type in ['application/x-gzip', 'application/zip'])
+                file_open_mode = 'wb' if file_is_binary else 'w'
+                file_extn = ''
+                if (mime_type ==  'application/x-gzip'):
+                    file_extn = '.gz'
+                elif (mime_type ==  'application/zip'):
+                    file_extn = '.zip'
+
                 if os.path.isdir(local_path):
-                    local_file = tempfile.mktemp("_"+str(file_id), "gdrive_", dir=local_path)
+                    local_file = tempfile.mktemp("_"+str(file_id)+file_extn, "gdrive_", dir=local_path)
                 else:
                     local_file = local_path
-                with open(local_file, 'w') as f:
-                    if content.startswith(codecs.BOM_UTF8):
-                        u = content.decode('utf-8-sig')
-                        content = u.encode('utf-8')
+                
+                logger.debug("file is binary: " + str(file_is_binary) + ", file_open_mode: " + file_open_mode)
+                with open(local_file, file_open_mode) as f:
+                    if not file_is_binary:
+                        if content.startswith(codecs.BOM_UTF8):
+                            u = content.decode('utf-8-sig')
+                            content = u.encode('utf-8')
                     f.write(content)
                     logger.debug("stored " + download_url + " to " + local_file)
                 return local_file
@@ -84,7 +122,7 @@ class GoogleDriveStore(CloudStore):
             logger.error('File empty or not found: %s' % (str(file_id),))
             return None        
     
-    def copy_to_remote(self, folder_id, local_path):
+    def copy_to_remote(self, folder_id, local_path, mime_type='text/plain'):
         try:
             if folder_id.startswith('gdrive://'):
                 folder_id = GoogleDriveStore.to_file_id(folder_id)
@@ -94,7 +132,7 @@ class GoogleDriveStore(CloudStore):
             body = {
                     'title': local_name,
                     'description': local_name,
-                    'mimeType': 'text/plain',
+                    'mimeType': mime_type,
                     'parents': [{'id': folder_id}]
             }
             uploaded_file = self.service.files().insert(body=body, media_body=media_body).execute()
@@ -103,6 +141,7 @@ class GoogleDriveStore(CloudStore):
         except:
             logger.exception("error uploading local file " + local_path + " to gdrive")
             return None
+
 
 class GoogleDriveHandler(StorageHandlerBase):
     OAUTH_SCOPE = 'https://www.googleapis.com/auth/drive'
@@ -114,9 +153,10 @@ class GoogleDriveHandler(StorageHandlerBase):
 
     @staticmethod
     def init(cfg):
-        GoogleDriveHandler.CLIENT_ID = cfg.get("cloudCS", "GOOGLE_CLIENT_ID")
-        GoogleDriveHandler.CLIENT_SECRET = cfg.get("cloudCS", "GOOGLE_CLIENT_SECRET")
-        GoogleDriveHandler.REDIRECT_URI = cfg.get("cloudCS", "GOOGLE_STORAGE_AUTH_REDIRECT_URI")
+        GoogleDriveHandler.CLIENT_ID = cfg.cfg_get("GOOGLE_CLIENT_ID")
+        GoogleDriveHandler.CLIENT_SECRET = cfg.cfg_get("GOOGLE_CLIENT_SECRET")
+        GoogleDriveHandler.REDIRECT_URI = cfg.cfg_get("GOOGLE_STORAGE_AUTH_REDIRECT_URI")
+        StorageHandlerBase.SEC_SALT = cfg.cfg_get("SECURE_SALT")
         logger.debug("initialized CLIENT_ID=" + GoogleDriveHandler.CLIENT_ID)
         logger.debug("initialized CLIENT_SECRET=" + GoogleDriveHandler.CLIENT_SECRET)
         logger.debug("initialized REDIRECT_URI=" + GoogleDriveHandler.REDIRECT_URI)
@@ -125,21 +165,25 @@ class GoogleDriveHandler(StorageHandlerBase):
     @tornado.gen.engine
     def get(self):
         logger.debug("google drive auth invoked")
+        uid, credentials = self._get_stashed_creds()
+        if credentials != None:
+            self._on_auth(None, credentials, GoogleDriveStore(credentials))
+            return
+                    
         flow_id = self.get_argument("state", None)
         if (None != flow_id):
             credentials = yield tornado.gen.Task(self._get_credentials, flow_id)
-            self._on_auth(credentials, GoogleDriveStore(credentials))
+            self._on_auth(flow_id, credentials, GoogleDriveStore(credentials))
         else:
-            self._get_code()
+            self._get_code(uid)
     
-    def _get_code(self):
+    def _get_code(self, uid):
         flow = OAuth2WebServerFlow(GoogleDriveHandler.CLIENT_ID, GoogleDriveHandler.CLIENT_SECRET, 
                                    GoogleDriveHandler.OAUTH_SCOPE, GoogleDriveHandler.REDIRECT_URI,
                                    approval_prompt="force")
-        flow_id = str(id(flow))
-        flow.params.update({'state':flow_id})
+        flow.params.update({'state':uid})
         
-        GoogleDriveHandler.FLOW_STORE[flow_id] = flow
+        GoogleDriveHandler.FLOW_STORE[uid] = flow
         authorize_url = flow.step1_get_authorize_url()
         self.redirect(authorize_url)
     

@@ -1,6 +1,7 @@
+import logging
+
 import tornado.web
 import tornado.auth
-import logging
 
 from common import PageHandlerBase
 from session import SessionInMemory as Session
@@ -28,5 +29,3 @@ class GoogleHandler(AuthHandlerBase, tornado.auth.GoogleMixin):
             self.get_authenticated_user(self.async_callback(self._on_auth))
             return
         self.authenticate_redirect()
-
-

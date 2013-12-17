@@ -2,3 +2,5 @@
 cloud_cs/*.pyc
 .project
 .pydevproject
+*.cfg
+*.log
