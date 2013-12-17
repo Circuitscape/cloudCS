@@ -122,7 +122,7 @@ class GoogleDriveStore(CloudStore):
             logger.error('File empty or not found: %s' % (str(file_id),))
             return None        
     
-    def copy_to_remote(self, folder_id, local_path):
+    def copy_to_remote(self, folder_id, local_path, mime_type='text/plain'):
         try:
             if folder_id.startswith('gdrive://'):
                 folder_id = GoogleDriveStore.to_file_id(folder_id)
@@ -132,7 +132,7 @@ class GoogleDriveStore(CloudStore):
             body = {
                     'title': local_name,
                     'description': local_name,
-                    'mimeType': 'text/plain',
+                    'mimeType': mime_type,
                     'parents': [{'id': folder_id}]
             }
             uploaded_file = self.service.files().insert(body=body, media_body=media_body).execute()

@@ -224,12 +224,19 @@ class CircuitscapeRunner:
         success = not solver_failed
         
         if success and multiuser:
+            qlogger.send_log_msg("compressing results for upload...")
+            output_folder_zip = os.path.join(work_dir, 'output.zip')
+            Utils.compress_folder(output_folder, output_folder_zip)
             qlogger.send_log_msg("uploading results to cloud store...")
-            for root, _dirs, files in os.walk(output_folder, topdown=False):
-                for name in files:
-                    outfile = os.path.join(root, name)
-                    qlogger.send_log_msg("uploading " + name + "...")
-                    store.copy_to_remote(output_cloud_folder, outfile)
+            if None == store.copy_to_remote(output_cloud_folder, output_folder_zip, 'application/zip'):
+                qlogger.send_log_msg("error uploading output.zip")
+            
+#             for root, _dirs, files in os.walk(output_folder, topdown=False):
+#                 for name in files:
+#                     outfile = os.path.join(root, name)
+#                     qlogger.send_log_msg("uploading " + name + "...")
+#                     if None == store.copy_to_remote(output_cloud_folder, outfile):
+#                         qlogger.send_log_msg("error uploading " + name)
             qlogger.send_log_msg("uploaded results to cloud store")
         
         qlogger.send_result_msg(msg_type, {'complete': True, 'success': success})

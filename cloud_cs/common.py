@@ -1,4 +1,4 @@
-import traceback, tempfile, os, hashlib, pickle
+import traceback, tempfile, os, hashlib, pickle, zipfile
 
 from circuitscape import __version__ as cs_version
 from circuitscape import __author__ as cs_author
@@ -65,3 +65,19 @@ class Utils:
         if not os.path.exists(creds_path):
             os.mkdir(creds_path)
         return creds_path 
+
+
+    @staticmethod
+    def compress_folder(directory, zipfilename):
+        zipf = zipfile.ZipFile(zipfilename, "w", compression=zipfile.ZIP_DEFLATED)
+        Utils.recursive_zip(zipf, directory)
+        zipf.close()
+
+
+    @staticmethod
+    def recursive_zip(zipf, directory, folder = ""):
+        for item in os.listdir(directory):
+            if os.path.isfile(os.path.join(directory, item)):
+                zipf.write(os.path.join(directory, item), folder + os.sep + item)
+            elif os.path.isdir(os.path.join(directory, item)):
+                Utils.recursive_zip(zipf, os.path.join(directory, item), folder + os.sep + item)

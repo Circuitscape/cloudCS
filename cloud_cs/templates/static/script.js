@@ -430,6 +430,7 @@ function init_circuitscape(ws_url, sess_id) {
 	});
 	
 	$('#btn_run').click(function(e){
+		$('#in_page_alert').hide();
 		run_job();
 	});
 	
