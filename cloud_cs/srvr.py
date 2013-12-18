@@ -1,6 +1,7 @@
-import os, webbrowser, getpass, StringIO, logging, json
-from multiprocessing import Process, Queue
-from threading import Thread
+import os, webbrowser, getpass, StringIO, logging, time
+import tornado.web, tornado.ioloop, tornado.websocket, tornado.httpserver, tornado.options
+
+from apiclient.http import HttpError
 
 from circuitscape.compute import Compute
 from circuitscape.cfg import CSConfig
@@ -8,53 +9,16 @@ from circuitscape import __version__ as cs_version
 from circuitscape import __author__ as cs_author
 from circuitscape import __file__ as cs_pkg_file
 
-from cloudstore import GoogleDriveStore
-
-import tornado.web
-import tornado.websocket
-import tornado.httpserver
-import tornado.ioloop
-
 from cfg import ServerConfig
-from common import PageHandlerBase, ErrorHandler, Utils
-from cloudauth import GoogleHandler as AuthHandler
+from common import PageHandlerBase, ErrorHandler, Utils, AsyncRunner, BaseMsg, WebSocketLogger
 from session import SessionInMemory as Session
+from cloudauth import GoogleHandler as AuthHandler
 from cloudstore import GoogleDriveHandler as StorageHandler
-from apiclient.http import HttpError
+from cloudstore import GoogleDriveStore
 
 SRVR_CFG = None
 
-class WebSocketLogger(logging.Handler):
-    def __init__(self, dest=None):
-        logging.Handler.__init__(self)
-        self.dest = dest
-        self.level = logging.DEBUG
-
-    def flush(self):
-        pass
-
-    def emit(self, record):
-        msg = self.format(record)
-        msg = msg.strip('\r')
-        msg = msg.strip('\n')
-        self.send_log_msg(msg)
-
-    def send_log_msg(self, msg):
-        resp_nv = {
-                   'msg_type': WSMsg.SHOW_LOG,
-                   'data': msg
-        }
-        self.dest.write_message(resp_nv, False)
-    
-    def send_log_msg_async(self, msg):
-        ioloop = tornado.ioloop.IOLoop.instance()
-        ioloop.add_callback_from_signal(lambda x: x[0].send_log_msg(x[1]), (self, msg))
-
-
-class WSMsg:
-    RSP_ERROR = -1
-    SHOW_LOG = 0
-    
+class WSMsg(BaseMsg):
     REQ_AUTH = 1000
     RSP_AUTH = 1001
     
@@ -73,134 +37,29 @@ class WSMsg:
     REQ_LOAD_CFG = 9
     RSP_LOAD_CFG = 10
     
-    logger = None
+    REQ_ABORT_JOB = 11
+    RSP_ABORT_JOB = 12
+
+
+class CircuitscapeRunner(AsyncRunner):
+    def __init__(self, wslogger, wsmsg, method, *args):
+        super(CircuitscapeRunner, self).__init__(wslogger, wsmsg, method, *args)
     
-    def __init__(self, msg_type=None, msg_nv=None, msg=None, handler=None):
-        self.handler = handler
-        if msg:
-            self.nv = json.loads(msg)
-        else:
-            self.nv = {
-                       'msg_type': msg_type,
-                       'data': msg_nv
-            }
-        WSMsg.logger.debug('received msg_type: %d, data[%s]' % (self.nv['msg_type'], str(self.nv['data'])))
-
-    def msg_type(self):
-        return self.nv['msg_type']
-
-    def data_keys(self):
-        return self.nv['data'].keys()
-
-    def data(self, key, default=None):
-        return self.nv['data'].get(key, default);
-
-    def error(self, err_code, sock=None):
-        resp_nv = {
-                   'msg_type': WSMsg.RSP_ERROR,
-                   'data': err_code
-        }
-        if sock == None:
-            sock = self.handler
-        sock.write_message(resp_nv, False)
-
-    def reply(self, response, sock=None):
-        resp_nv = {
-                   'msg_type': (self.nv['msg_type'] + 1),
-                   'data': response
-        }
-        if sock == None:
-            sock = self.handler
-        sock.write_message(resp_nv, False)
-
-    def reply_async(self, response):
-        ioloop = tornado.ioloop.IOLoop.instance()
-        ioloop.add_callback(lambda x: x[0].reply(x[1]), (self, response))
-
-    def error_async(self, err_code):
-        ioloop = tornado.ioloop.IOLoop.instance()
-        ioloop.add_callback(lambda x: x[0].error(x[1]), (self, err_code))
-
-
-class QueueLogger(logging.Handler):
-    def __init__(self, q):
-        logging.Handler.__init__(self)
-        self.q = q
-        self.level = logging.DEBUG
-
-    def flush(self):
-        pass
-
-    def emit(self, record):
-        msg = self.format(record)
-        msg = msg.strip('\r')
-        msg = msg.strip('\n')
-        self.send_log_msg(msg)
-
-    def send_log_msg(self, msg):
-        self.q.put((WSMsg.SHOW_LOG, msg))
-    
-    def send_result_msg(self, msg_type, ret):
-        self.q.put((msg_type, ret))
-
-    def send_error_msg(self, msg):
-        self.q.put((WSMsg.RSP_ERROR, msg))
-
-
-class CircuitscapeRunner:
-
-    def process_q_async(self):
-        try:
-            while (self.results == None) or self.p.is_alive() or (not self.q.empty()):
-                msg_type, msg = self.q.get(False)
-                if msg_type == WSMsg.SHOW_LOG:
-                    self.wslogger.send_log_msg(msg)
-                elif msg_type == self.in_msg_type:
-                    self.results = msg
-            
-            if not self.p.is_alive():
-                self.p.join()
-                
-                if self.results:
-                    self.wsmsg.reply(self.results)
-                self.timer.stop()
-        except:
-            pass
+    def completed(self):
+        if (None != self.wslogger) and (None != self.wslogger.dest):
+            self.wslogger.dest.task = None
         
-    
     @staticmethod
-    def async_websock_method(wslogger, wsmsg, method, *args):
-        q = Queue()
-        in_msg_type = wsmsg.msg_type()
-        
-        args = list(args)
-        args.insert(0, in_msg_type)
-        args.insert(0, q)
-
-        runner = CircuitscapeRunner()
-        runner.results = None
-        runner.p = Process(target=method, args=args)
-        runner.q = q
-        runner.in_msg_type = in_msg_type
-        runner.wslogger = wslogger
-        runner.wsmsg = wsmsg
-        runner.p.start()
-        runner.timer = tornado.ioloop.PeriodicCallback(lambda: runner.process_q_async(), 1000)
-        runner.process_q_async()
-        runner.timer.start()
-    
-    @staticmethod
-    def run_job(q, msg_type, msg_data, work_dir, storage_creds, multiuser):
+    def run_job(qlogger, msg_type, msg_data, work_dir, storage_creds, store_in_cloud):
         solver_failed = True
         output_cloud_folder = None
         output_folder = None
         cfg = CSConfig()
-        qlogger = QueueLogger(q)
-        store = GoogleDriveStore(storage_creds)
+        store = GoogleDriveStore(storage_creds) if (None != storage_creds) else None
         
         for key in msg_data.keys():
             val = msg_data[key]
-            if multiuser and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
+            if store_in_cloud and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
                 # if val is gdrive location, translate it to local drive
                 if val.startswith("gdrive://"):
                     if key == 'output_file':
@@ -239,13 +98,18 @@ class CircuitscapeRunner:
 
         success = not solver_failed
         
-        if success and multiuser:
+        if success and store_in_cloud:
             qlogger.send_log_msg("compressing results for upload...")
             output_folder_zip = os.path.join(work_dir, 'output.zip')
             Utils.compress_folder(output_folder, output_folder_zip)
-            qlogger.send_log_msg("uploading results to cloud store...")
-            if None == store.copy_to_remote(output_cloud_folder, output_folder_zip, 'application/zip'):
-                qlogger.send_log_msg("error uploading output.zip")
+            
+            for attempt in range(1,4):
+                qlogger.send_log_msg("uploading results to cloud store...")
+                if None == store.copy_to_remote(output_cloud_folder, output_folder_zip, 'application/zip'):
+                    qlogger.send_log_msg("error uploading output.zip. attempt " + str(attempt) + " of 3")
+                    time.sleep(5)
+                else:
+                    break
             
 #             for root, _dirs, files in os.walk(output_folder, topdown=False):
 #                 for name in files:
@@ -259,11 +123,10 @@ class CircuitscapeRunner:
                     
     
     @staticmethod
-    def run_verify(q, msg_type):
+    def run_verify(qlogger, msg_type):
         outdir = None
         cwd = os.getcwd()
         strio = StringIO.StringIO()
-        qlogger = QueueLogger(q)
         try:
             root_path = os.path.dirname(cs_pkg_file)
             outdir = Utils.mkdtemp(prefix="verify_")
@@ -307,7 +170,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
     def on_message(self, message):
         global SRVR_CFG
         #logger.debug("got request url " + self.request.full_url())
-        logger.debug("websocket message received [%s]"%(str(message),))
+        #logger.debug("websocket message received [%s]"%(str(message),))
         wsmsg = WSMsg(msg=message, handler=self)
         is_shutdown_msg = False
         response = {}
@@ -323,6 +186,8 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                     response, is_shutdown_msg = self.handle_run_verify(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_RUN_JOB):
                     response, is_shutdown_msg = self.handle_run_job(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_ABORT_JOB):
+                    response, is_shutdown_msg = self.handle_abort_job(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
                     response, is_shutdown_msg = self.handle_load_config(wsmsg)
 
@@ -379,17 +244,27 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         logger.debug("returning config [" + str(result) + "]")
         return ({'cfg': result, 'success': success}, False)
 
+    def handle_abort_job(self, wsmsg):
+        if self.task != None:
+            self.task.abort()
+        return (None, False)
 
     def handle_run_job(self, wsmsg):
         global SRVR_CFG
         wslogger = WebSocketLogger(self)
-        CircuitscapeRunner.async_websock_method(wslogger, wsmsg, CircuitscapeRunner.run_job, wsmsg.nv['data'], self.work_dir, self.storage_creds, SRVR_CFG.multiuser)
+        multiuser = SRVR_CFG.multiuser
+        if multiuser:
+            work_dir = self.work_dir
+            storage_creds = self.storage_creds
+        else:
+            work_dir = storage_creds = None
+        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
         return (None, False)
 
 
     def handle_run_verify(self, wsmsg):
         wslogger = WebSocketLogger(self)
-        CircuitscapeRunner.async_websock_method(wslogger, wsmsg, CircuitscapeRunner.run_verify)
+        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_verify)
         return (None, False)
 
 
@@ -502,20 +377,29 @@ def run_webgui(config):
     global logger
     SRVR_CFG = ServerConfig(config)
     
-    Utils.srvr_cfg = SRVR_CFG
     Utils.temp_files_root = SRVR_CFG.cfg_get("temp_dir", str, None)
     log_lvl = SRVR_CFG.cfg_get("log_level", str, "DEBUG")
     log_lvl = getattr(logging, log_lvl)
     log_file = SRVR_CFG.cfg_get("log_file", str, None)
     
     logger = logging.getLogger('cloudCS')
+    tornado_access_logger = logging.getLogger('tornado.access')
+    tornado_application_logger = logging.getLogger('tornado.application')
+    tornado_general_logger = logging.getLogger('tornado.general')
+    
     logger.setLevel(log_lvl)
+    tornado_access_logger.setLevel(log_lvl)
+    tornado_application_logger.setLevel(log_lvl)
+    tornado_general_logger.setLevel(log_lvl)
     
     if log_file:
         handler = logging.FileHandler(log_file)
         formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(message)s', '%m/%d/%Y %I.%M.%S.%p')
         handler.setFormatter(formatter)
         logger.addHandler(handler)
+        tornado_access_logger.addHandler(handler)
+        tornado_application_logger.addHandler(handler)
+        tornado_general_logger.addHandler(handler)
     else:
         logging.basicConfig()
 
@@ -525,7 +409,10 @@ def run_webgui(config):
     logger.debug("multiuser: " + str(SRVR_CFG.multiuser))
     logger.debug("headless: " + str(SRVR_CFG.headless))
 
-    WSMsg.logger = logger
+    AsyncRunner.DEFAULT_REPLY = {'complete': True, 'success': False}
+    AsyncRunner.LOG_MSG = WSMsg.SHOW_LOG
+
+    BaseMsg.logger = logger
     server = tornado.httpserver.HTTPServer(Application())
     server.listen(SRVR_CFG.port, address=SRVR_CFG.listen_ip)
     if not SRVR_CFG.headless:

@@ -1,7 +1,4 @@
-import logging
-
-import tornado.web
-import tornado.auth
+import logging, tornado.web, tornado.auth
 
 from common import PageHandlerBase
 from session import SessionInMemory as Session

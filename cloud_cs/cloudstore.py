@@ -1,8 +1,5 @@
-import logging, httplib2, os, tempfile, codecs
+import logging, httplib2, os, tempfile, codecs, tornado
 from abc import ABCMeta, abstractmethod
-
-import tornado.web
-import tornado.gen
 
 from apiclient.discovery import build
 from apiclient.http import MediaFileUpload
