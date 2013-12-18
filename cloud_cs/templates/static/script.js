@@ -25,12 +25,24 @@ var ws_msg_types = {
     
     'REQ_LOAD_CFG': 9,
     'RSP_LOAD_CFG': 10,
+    
+    'REQ_ABORT_JOB': 11,
+    'RSP_ABORT_JOB': 12
 };
 
 var ws_conn_authenticated = false;
 var ws_conn = null;
 var ws_conn_onopen = null;
 var ws_conn_onmessage = null;
+
+function send_ws(msg_type, data){
+	if(null != ws_conn) {
+		ws_conn.send(JSON.stringify({
+			'msg_type': msg_type,
+			'data': data
+		}));		
+	}
+}
 
 function do_ws(onopen, onmessage) {
 	ws_conn_onopen = onopen;
@@ -314,6 +326,7 @@ function run_job() {
 			$('#results_div_msg').val('');
 			$('#results_div').modal('show');
 			$('#results_div_close').attr('disabled', 'disabled');
+			$('#btn_abort_run').removeAttr('disabled');
 			ws_conn.send(JSON.stringify({
 				'msg_type': ws_msg_types.REQ_RUN_JOB,
 				'data': cfg
@@ -324,6 +337,7 @@ function run_job() {
 				$('#results_div_msg').val((resp.data.success ? 'Success' : 'Failed') + '.\n' + $('#results_div_msg').val());
 				ws_conn.close();
 				$('#results_div_close').removeAttr('disabled');
+				$('#btn_abort_run').attr('disabled', 'disabled');
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
@@ -331,6 +345,7 @@ function run_job() {
 			else if(resp.msg_type == ws_msg_types.RSP_ERROR) {
 				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
 				$('#results_div_close').removeAttr('disabled');
+				$('#btn_abort_run').attr('disabled', 'disabled');
 			}
 		});	
 };
@@ -342,6 +357,7 @@ function run_verify() {
 			$('#results_div_msg').val('');
 			$('#results_div').modal('show');
 			$('#results_div_close').attr('disabled', 'disabled');
+			$('#btn_abort_run').removeAttr('disabled');
 			ws_conn.send(JSON.stringify({
 				'msg_type': ws_msg_types.REQ_RUN_VERIFY,
 				'data': ""
@@ -357,6 +373,7 @@ function run_verify() {
 				}
 				ws_conn.close();
 				$('#results_div_close').removeAttr('disabled');
+				$('#btn_abort_run').attr('disabled', 'disabled');
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
@@ -364,8 +381,13 @@ function run_verify() {
 			else if(resp.msg_type == ws_msg_types.RSP_ERROR) {
 				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
 				$('#results_div_close').removeAttr('disabled');
+				$('#btn_abort_run').attr('disabled', 'disabled');
 			}
 		});	
+};
+
+function abort_run() {
+	send_ws(ws_msg_types.REQ_ABORT_JOB, "");
 };
 
 function alert_in_page(msg, level) {
@@ -432,6 +454,10 @@ function init_circuitscape(ws_url, sess_id) {
 	$('#btn_run').click(function(e){
 		$('#in_page_alert').hide();
 		run_job();
+	});
+	
+	$('#btn_abort_run').click(function(e){
+		abort_run();
 	});
 	
 	$('#use_max_parallel').click(function(e){
