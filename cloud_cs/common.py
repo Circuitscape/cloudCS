@@ -209,15 +209,33 @@ class AsyncRunner(object):
         self.in_msg_type = in_msg_type
         self.wslogger = wslogger
         self.wsmsg = wsmsg
-        self.p.start()
-        self.timer = tornado.ioloop.PeriodicCallback(lambda: self._process_q(), 1000)
-        #self.process_q_async()
-        self.timer.start()
+        self.p.start()        
+        self._start_handler(q)
+            
+    def _start_handler(self, q):
+        if hasattr(q, '_reader'):
+            # use the reader fd to hook into ioloop
+            self.fd = q._reader.fileno()
+            ioloop = tornado.ioloop.IOLoop.instance()
+            ioloop.add_handler(self.fd, lambda fd, events: self._process_q(), tornado.ioloop.IOLoop.READ | tornado.ioloop.IOLoop.ERROR)
+        else:
+            self.timer = tornado.ioloop.PeriodicCallback(lambda: self._process_q(), 1000)
+            self.timer.start()
+
+    def _stop_handler(self):
+        if hasattr(self, 'timer'):
+            if self.timer != None:
+                self.timer.stop()
+                self.timer = None
+        elif hasattr(self, 'fd'):
+            if self.fd != None:
+                ioloop = tornado.ioloop.IOLoop.instance()
+                ioloop.remove_handler(self.fd)
+                self.fd = None
 
     def abort(self):
         self.wslogger.send_log_msg("Aborting...")
-        if None != self.timer:
-            self.timer.stop()
+        self._stop_handler()
         if None != self.p:
             self.wslogger.send_log_msg("Sending terminate request...")
             self.p.terminate()
@@ -245,10 +263,12 @@ class AsyncRunner(object):
                 if msg_type == BaseMsg.SHOW_LOG:
                     self.wslogger.send_log_msg(msg)
                 elif msg_type == self.in_msg_type:
-                    self.results = msg
-            
-            self.timer.stop()
-            self.timer = None
+                    self.results = msg            
+        except:
+            pass
+        
+        if (self.results != None) or ((not self.p.is_alive()) and self.q.empty()):
+            self._stop_handler()
             self.p.join()
             self.p = None
             if self.results:
@@ -257,6 +277,5 @@ class AsyncRunner(object):
                 # send a failure message if process died without responding
                 self.wsmsg.reply(AsyncRunner.DEFAULT_REPLY)
             self.completed()
-        except:
-            pass
+
     

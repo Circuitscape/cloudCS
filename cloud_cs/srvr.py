@@ -1,5 +1,5 @@
 import os, webbrowser, getpass, StringIO, logging, time
-import tornado.web, tornado.ioloop, tornado.websocket, tornado.httpserver
+import tornado.web, tornado.ioloop, tornado.websocket, tornado.httpserver, tornado.options
 
 from apiclient.http import HttpError
 
@@ -383,13 +383,23 @@ def run_webgui(config):
     log_file = SRVR_CFG.cfg_get("log_file", str, None)
     
     logger = logging.getLogger('cloudCS')
+    tornado_access_logger = logging.getLogger('tornado.access')
+    tornado_application_logger = logging.getLogger('tornado.application')
+    tornado_general_logger = logging.getLogger('tornado.general')
+    
     logger.setLevel(log_lvl)
+    tornado_access_logger.setLevel(log_lvl)
+    tornado_application_logger.setLevel(log_lvl)
+    tornado_general_logger.setLevel(log_lvl)
     
     if log_file:
         handler = logging.FileHandler(log_file)
         formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(message)s', '%m/%d/%Y %I.%M.%S.%p')
         handler.setFormatter(formatter)
         logger.addHandler(handler)
+        tornado_access_logger.addHandler(handler)
+        tornado_application_logger.addHandler(handler)
+        tornado_general_logger.addHandler(handler)
     else:
         logging.basicConfig()
 
