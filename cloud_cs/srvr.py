@@ -1,5 +1,5 @@
 import os, webbrowser, getpass, StringIO, logging, time
-import tornado.web, tornado.ioloop, tornado.websocket, tornado.httpserver, tornado.options
+import tornado.web, tornado.ioloop, tornado.websocket, tornado.httpserver
 
 from apiclient.http import HttpError
 
@@ -269,7 +269,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
 
 
     def handle_logout(self, wsmsg):
-        if self.sess != None:
+        if SRVR_CFG.multiuser and (self.sess != None):
             self.sess.logout()
             self.sess = None
         return ({}, True)
@@ -297,8 +297,10 @@ class IndexPageHandler(PageHandlerBase):
             self.sess_id = sess_id = Session.extract_session_id(self)
             self.sess = sess = Session.get_session(sess_id)
             if self.sess == None:
-                logger.debug("redirecting request for authentication")
-                self.redirect('/auth/login')
+                logger.debug("redirecting request to home page")
+                self.redirect('/static/index.html')
+                #logger.debug("redirecting request for authentication")
+                #self.redirect('/auth/login')
                 return
             username = sess.user_name()
             userid = sess.user_id()

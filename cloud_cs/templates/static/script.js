@@ -118,9 +118,14 @@ function logoff() {
 		},
 		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_LOGOUT) {
-				$.removeCookie("cloudcs_sess");
 				ws_conn.close();
-				$('body').html('<p></p>');
+				if(!$.cookie("cloudcs_sess")) {
+					$('body').html('<p></p>');					
+				}
+				else {
+					$.removeCookie("cloudcs_sess");
+					document.location.href = "/";
+				}
 			}
 		});
 };
