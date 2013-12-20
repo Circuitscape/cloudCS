@@ -14,7 +14,7 @@ class Session:
         logger.info("authenticated " + self.user_id())
         if not self.cfg().is_user_allowed(self.user_id()):
             raise RuntimeError("user not authorized")
-        logger.debug("user " + self.user_id() + " allowed")
+        logger.debug("user " + self.user_id() + " allowed in role(s) " + str(self.user_role()))
         
         self.local_work_dir = Utils.mkdtemp(prefix="sess_")
         logger.debug("created temporary folder " + self.local_work_dir)
@@ -52,6 +52,9 @@ class Session:
     @abstractmethod
     def user_name(self):
         raise NotImplementedError
+
+    def user_role(self):
+        return self.cfg().get_user_role(self.user_id())
 
     @abstractmethod
     def set(self, attrib_name, attrib_val):

@@ -57,10 +57,17 @@
 									<li>
 										<a href="#">Run Batch</a>
 									</li-->
+									{% if ("admin" in userrole) or ("standalone" in userrole) %}
 									<li class="divider"></li>
 									<li>
 										<a href="#" id="menu_verify">Verify Installation</a>
 									</li>
+									{% end %}
+									{% if ("admin" in userrole) %}
+									<li>
+										<a href="#" id="menu_admin">Server Administration</a>
+									</li>
+									{% end %}
 								</ul>
 							</li>
 							<li>

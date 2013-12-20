@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta name="description" content="Circuitscape {{version}}">
+		<meta name="author" content="tan">
+		<link rel="shortcut icon" href="/static/cs_logo.ico">
+
+		<title>Circuitscape Cloud</title>
+
+		<link href="/ext/bootstrap/css/bootstrap.css" rel="stylesheet">
+
+		<style>
+			body {
+			  padding-bottom: 20px;
+			}
+		</style>
+	</head>
+
+	<body>
+		<!-- Fixed navbar -->
+		<div class="navbar navbar-inverse navbar-fixed-top" role="navigation">
+			<div class="container" style="padding-top: 8px; padding-right: 80px">
+				<ul class="nav navbar-nav navbar-right">
+					<li>
+						<button type="submit" class="btn btn-success" id="btn_login">Sign in</button>
+					</li>
+				</ul>
+			</div><!--/.container -->
+		</div><!--/.navbar -->
+
+		<div class="jumbotron">
+			<div class="container">
+				<h1>Circuitscape Cloud</h1>
+				<p>
+					Circuitscape is a free, open-source program which borrows algorithms from electronic circuit theory to 
+					predict patterns of movement, gene flow, and genetic differentiation among plant and animal populations 
+					in heterogeneous landscapes.
+				</p>
+				<p>
+					Circuitscape on the cloud is an on demand, highly scalable, cloud hosted solution for Circuitscape.
+					<ul>
+						<li>Upload data to cloud storage.</li>
+						<li>Compute using Circuitscape Cloud.</li>
+						<li>Get results back on your cloud storage.</li>
+					</ul>
+				</p>
+				<p><a class="btn btn-primary btn-lg" role="button" href="http://www.circuitscape.org/">Learn more &raquo;</a></p>
+			</div>
+		</div>
+
+		<div class="container">
+			<div class="row">
+				<div class="col-md-4">
+					<h2>What’s New</h2>
+					<p>
+						<b>Dec 2013 -</b> Circuitscape 4.0 is under development.
+					</p>						
+					<p>
+						<b>Oct 2013 -</b> Circuitscape can now be called from an ArcGIS toolbox. 
+						No more converting input grids to ASCII format! Just install the ArcGIS 
+						toolbox from our downloads page when you install Circuitscape.
+					</p>
+					<p>
+						<b>Jan 2013 -</b> Linkage Mapper is now integrated with Circuitscape.  It 
+						uses Circuitscape to identify pinch points within least-cost corridors and 
+						to analyze linkage network centrality.  See the Linkage Mapper website 
+						for more.
+					</p>
+					<p>
+						<b>July 2012 -</b> Circuitscape 3.5.8 is now available for download.
+					</p>
+					<p><a class="btn btn-default" role="button" href="http://www.circuitscape.org/">More &raquo;</a></p>
+				</div>
+				<div class="col-md-4">
+					<h2>Press</h2>
+					<p>
+						<b>Nature Conservancy Magazine:</b> Circuit Theory: Rewiring Nature by Oakley Brooks
+					</p>
+					<p>
+						<b>Conservation Magazine:</b> Circuitous Routes: Circuit Theory Guides Wildlife Corridor Design by Eric Wagner
+					</p>
+					<p>
+						<b>Wired Magazine:</b> Scientist Employs 'Circuit Theory' to Protect Endangered Speciesby Carl Zimmer							
+					</p>
+					<p>
+						<b>Convergence Magazine:</b> Where the Wild Things Are by Anna Davison
+					</p>
+					<p>
+						<b>Earthtimes.org:</b> Where Mountain Lions Roam: Star-P Helps Decipher Threatened Wildlife Migration
+					</p>
+					</p>
+					<p><a class="btn btn-default" role="button" href="http://www.circuitscape.org/">More &raquo;</a></p>
+				</div>
+				<div class="col-md-4">
+					<h2>Support</h2>
+					<p>
+						To report bugs or request help with Circuitscape, please join the Circuitscape user group.
+						Please also feel free to suggest improvements for the code or user guide.							
+					</p>
+					<p><a class="btn btn-default" href="#" role="button" href="https://groups.google.com/forum/#!forum/circuitscape">Circuitscape User Group &raquo;</a></p>
+					<p>&nbsp;</p>
+					<p>
+						Circuitscape is under active development at GitHub. Please join and contribute.
+					</p>
+					<p><a class="btn btn-default" role="button" href="https://github.com/Circuitscape/">Circuitscape GitHub Project &raquo;</a></p>
+				</div>
+			</div>
+		</div>
+
+		<hr/>
+
+		<!-- Bootstrap core JavaScript
+		================================================== -->
+		<!-- Placed at the end of the document so the pages load faster -->
+		<script src="/ext/jquery-1.10.2.js" type="text/javascript"></script>
+		<script src="/ext/jquery.cookie.js" type="text/javascript"></script>
+		<script src="/ext/bootstrap/js/bootstrap.min.js" type="text/javascript"></script>
+	
+		<script type="text/javascript">
+			$(document).ready(function() {
+				$('#btn_login').click(function(e){
+					document.location.href = "/auth/login";
+				});
+				
+				if(!$.cookie("cloudcs_sess")) {
+					$('#btn_login').popover({
+						'placement': 'bottom',
+						'trigger': 'hover',
+						'delay': 100,
+						'html': true,
+						'template': '<div class="popover" style="width: 300px"><div class="arrow"></div><div class="popover-inner"><h3 class="popover-title"></h3><div class="popover-content"><p></p></div></div></div>',
+						'content': '<p>Circuitscape Cloud uses Google for authentication and cloud storage.</p><p>On your first use, you may be prompted once to log in and once more to authorize Google Drive access for Circuitscape.</p>'
+					});					
+				}
+			});
+		</script>
+	</body>
+</html>

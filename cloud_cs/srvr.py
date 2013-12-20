@@ -304,6 +304,7 @@ class IndexPageHandler(PageHandlerBase):
                 return
             username = sess.user_name()
             userid = sess.user_id()
+            userrole = sess.user_role()
             txt_shutdown = "Logout"
             txt_shutdown_msg = "Are you sure you want to logout from Circuitscape?"
             filedlg_type = "google"
@@ -311,6 +312,7 @@ class IndexPageHandler(PageHandlerBase):
             filedlg_app_id = SRVR_CFG.cfg_get("GOOGLE_CLIENT_ID")
         else:
             userid = username = getpass.getuser()
+            userrole = ['standalone']
             txt_shutdown = "Shutdown"
             txt_shutdown_msg = "Are you sure you want to close Circuitscape?"
             filedlg_type = "srvr"
@@ -321,6 +323,7 @@ class IndexPageHandler(PageHandlerBase):
         kwargs = {
                   'username': username,
                   'userid': userid,
+                  'userrole': userrole,
                   'version': cs_version,
                   'author': cs_author,
                   'ws_url': SRVR_CFG.ws_url,

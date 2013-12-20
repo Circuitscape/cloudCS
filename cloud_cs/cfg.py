@@ -20,6 +20,14 @@ class ServerConfig:
         if self.allowed_users != None:
             self.allowed_users = [line.strip() for line in open(self.allowed_users, 'r')]
             
+        self.user_roles = self.cfg_get("user_roles", str)
+        if self.user_roles != None:
+            user_roles = {}
+            for line in open(self.user_roles, 'r'):
+                uid, role = line.strip().split()
+                user_roles[uid] = role
+            self.user_roles = user_roles
+            
         self.http_url = "http://" + self.host + ':' + str(self.port) + '/'
         self.ws_url = "ws://" + self.host + ':' + str(self.port) + ServerConfig.SERVER_WS_PATH
         self.storage_auth_redirect_uri = "http://" + self.host + ':' + str(self.port) + ServerConfig.SERVER_STORAGE_AUTH_PATH
@@ -28,6 +36,11 @@ class ServerConfig:
         if self.allowed_users == None:
             return True
         return (user in self.allowed_users)
+    
+    def get_user_role(self, user):
+        if self.user_roles and (user in self.user_roles):
+            return self.user_roles.get(user).split(',')
+        return ['user']
     
     def cfg_set(self, nm, val):
         self.in_cfg.set("cloudCS", nm, val)

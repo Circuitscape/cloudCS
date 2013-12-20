@@ -27,6 +27,12 @@ port=8080
 # In cloud mode these are OAuth credentials (email id).
 allowed_users=user_list.txt
 
+# File containing list of users with their roles.
+# Roles are comma separated, without any spaces.
+# Each line has user id and roles separated by space.
+# Supported roles: admin, user (default)
+user_roles=user_roles.txt
+
 # Secure salt is used as a key to encrypt information when required.
 # To be effective, this must be a random string, unique for each installation
 SECURE_SALT=change_this_to_a_random_string
