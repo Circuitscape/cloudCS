@@ -53,6 +53,14 @@ class Session:
     def user_name(self):
         raise NotImplementedError
 
+    def is_user_in_role(self, role):
+        userroles = self.cfg().get_user_role(self.user_id())
+        checkroles = role if isinstance(role, list) else [role]
+        for eachrole in checkroles:
+            if eachrole in userroles:
+                return True
+        return False
+
     def user_role(self):
         return self.cfg().get_user_role(self.user_id())
 

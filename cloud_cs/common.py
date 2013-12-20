@@ -153,6 +153,13 @@ class WebSocketLogger(logging.Handler):
         msg = msg.strip('\n')
         self.send_log_msg(msg)
 
+    def send_error_msg(self, msg):
+        resp_nv = {
+                   'msg_type': BaseMsg.RSP_ERROR,
+                   'data': msg
+        }
+        self.dest.write_message(resp_nv, False)
+
     def send_log_msg(self, msg):
         resp_nv = {
                    'msg_type': BaseMsg.SHOW_LOG,
@@ -262,8 +269,10 @@ class AsyncRunner(object):
                 msg_type, msg = self.q.get(False)
                 if msg_type == BaseMsg.SHOW_LOG:
                     self.wslogger.send_log_msg(msg)
+                if msg_type == BaseMsg.RSP_ERROR:
+                    self.wslogger.send_error_msg(msg)
                 elif msg_type == self.in_msg_type:
-                    self.results = msg            
+                    self.results = msg
         except:
             pass
         

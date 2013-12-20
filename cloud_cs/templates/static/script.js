@@ -165,6 +165,7 @@ function set_form_field(fld_name, fld_val, fld_type) {
 
 function load_cfg(filename) {
 	alert_in_page('Loading configuration from ' + filename + '...', 'info');
+	$('#btn_run').attr('disabled', 'disabled');
 	do_ws(function() {
 			ws_conn.send(JSON.stringify({
 				'msg_type': ws_msg_types.REQ_LOAD_CFG,
@@ -173,6 +174,7 @@ function load_cfg(filename) {
 		},
 		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_LOAD_CFG) {
+				$('#btn_run').removeAttr('disabled');
 				if(resp.data.success) {
 					alert_in_page('Loaded configuration from ' + filename, 'success');
 					populate_config(resp.data.cfg);

@@ -5,6 +5,7 @@ from apiclient.http import HttpError
 
 from circuitscape.compute import Compute
 from circuitscape.cfg import CSConfig
+from circuitscape.io import CSIO
 from circuitscape import __version__ as cs_version
 from circuitscape import __author__ as cs_author
 from circuitscape import __file__ as cs_pkg_file
@@ -48,9 +49,39 @@ class CircuitscapeRunner(AsyncRunner):
     def completed(self):
         if (None != self.wslogger) and (None != self.wslogger.dest):
             self.wslogger.dest.task = None
-        
+    
     @staticmethod
-    def run_job(qlogger, msg_type, msg_data, work_dir, storage_creds, store_in_cloud):
+    def check_role_limits(roles, cfg, qlogger):
+        if "admin" in roles:
+            return (True, None)
+        
+        try:
+            # check max parallel
+            qlogger.send_log_msg("Parallelization requested: " + str(cfg.parallelize))
+            if cfg.parallelize:
+                qlogger.send_log_msg("Parallel processes requested: " + (str(cfg.max_parallel) if (cfg.max_parallel > 0) else "maximum"))
+                if cfg.max_parallel == 0:
+                    cfg.max_parallel = 20
+                else:
+                    return (False, "Your profile is restricted to a maximum of 20 parallel processors.")
+            
+            # check for cumulative maps
+            qlogger.send_log_msg("Output maps required for - voltage: " + str(cfg.write_volt_maps) + ", current: " + str(cfg.write_cur_maps) + ", cumulative only: " + str(cfg.write_cum_cur_map_only))
+            if cfg.write_volt_maps or (cfg.write_cur_maps and (not cfg.write_cum_cur_map_only)):
+                return (False, "Your profile is restricted to create only cumulative current maps.")
+            
+            # check problem size
+            prob_sz = CSIO.problem_size(cfg.data_type, cfg.habitat_file)
+            qlogger.send_log_msg("Habitat size: " + str(prob_sz))
+            if prob_sz > 24000000:
+                return (False, "Your profile is restricted for habitat sizes of 24m nodes only.")
+        except Exception as e:
+            return (False, "Unknown error verifying limits. (" + str(e) + "). Please check your input files.")
+        
+        return (True, None)
+    
+    @staticmethod
+    def run_job(qlogger, msg_type, roles, msg_data, work_dir, storage_creds, store_in_cloud):
         solver_failed = True
         output_cloud_folder = None
         output_folder = None
@@ -64,7 +95,7 @@ class CircuitscapeRunner(AsyncRunner):
                 if val.startswith("gdrive://"):
                     if key == 'output_file':
                         # store the output gdrive folder
-                        qlogger.send_log_msg("preparing cloud store output folder: " + val)
+                        qlogger.send_log_msg("Preparing cloud store output folder: " + val)
                         output_cloud_folder = val
                         output_folder = os.path.join(work_dir, 'output')
                         if not os.path.exists(output_folder):
@@ -72,26 +103,31 @@ class CircuitscapeRunner(AsyncRunner):
                         val = os.path.join(output_folder, 'results.out')
                     else:
                         # copy the file locally
-                        qlogger.send_log_msg("reading from cloud store: " + val)
+                        qlogger.send_log_msg("Reading from cloud store: " + val)
                         val = store.copy_to_local(val, work_dir)
             cfg.__setattr__(key, val)
         
-        qlogger.send_log_msg("verifying configuration...")
-        (all_options_entered, message) = cfg.check()
-        if not all_options_entered:
+        qlogger.send_log_msg("Verifying configuration...")
+        (all_options_valid, message) = cfg.check()
+        
+        if all_options_valid:
+            qlogger.send_log_msg("Verifying profile limits...")
+            (all_options_valid, message) = CircuitscapeRunner.check_role_limits(roles, cfg, qlogger)
+            
+        if not all_options_valid:
             qlogger.send_error_msg(message)
         else:
             # In cloud mode, this would be a temporary directory
             outdir, _out_file = os.path.split(cfg.output_file)
             
             try:
-                qlogger.send_log_msg("storing final configuration...")
+                qlogger.send_log_msg("Storing final configuration...")
                 configFile = os.path.join(outdir, 'circuitscape.ini')
                 cfg.write(configFile)
     
                 cs = Compute(configFile, qlogger)
                 result, solver_failed = cs.compute()
-                qlogger.send_log_msg("result: \n" + str(result))
+                qlogger.send_log_msg("Result: \n" + str(result))
             except Exception as e:
                 message = str(e)
                 qlogger.send_error_msg(message)
@@ -99,14 +135,14 @@ class CircuitscapeRunner(AsyncRunner):
         success = not solver_failed
         
         if success and store_in_cloud:
-            qlogger.send_log_msg("compressing results for upload...")
+            qlogger.send_log_msg("Compressing results for upload...")
             output_folder_zip = os.path.join(work_dir, 'output.zip')
             Utils.compress_folder(output_folder, output_folder_zip)
             
             for attempt in range(1,4):
-                qlogger.send_log_msg("uploading results to cloud store...")
+                qlogger.send_log_msg("Uploading results to cloud store...")
                 if None == store.copy_to_remote(output_cloud_folder, output_folder_zip, 'application/zip'):
-                    qlogger.send_log_msg("error uploading output.zip. attempt " + str(attempt) + " of 3")
+                    qlogger.send_log_msg("Error uploading output.zip. attempt " + str(attempt) + " of 3")
                     time.sleep(5)
                 else:
                     break
@@ -117,13 +153,13 @@ class CircuitscapeRunner(AsyncRunner):
 #                     qlogger.send_log_msg("uploading " + name + "...")
 #                     if None == store.copy_to_remote(output_cloud_folder, outfile):
 #                         qlogger.send_log_msg("error uploading " + name)
-            qlogger.send_log_msg("uploaded results to cloud store")
+            qlogger.send_log_msg("Uploaded results to cloud store")
         
         qlogger.send_result_msg(msg_type, {'complete': True, 'success': success})
                     
     
     @staticmethod
-    def run_verify(qlogger, msg_type):
+    def run_verify(qlogger, msg_type, roles):
         outdir = None
         cwd = os.getcwd()
         strio = StringIO.StringIO()
@@ -258,13 +294,13 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             storage_creds = self.storage_creds
         else:
             work_dir = storage_creds = None
-        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
+        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, self.sess.user_role(), wsmsg.nv['data'], work_dir, storage_creds, multiuser)
         return (None, False)
 
 
     def handle_run_verify(self, wsmsg):
         wslogger = WebSocketLogger(self)
-        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_verify)
+        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_verify, self.sess.user_role())
         return (None, False)
 
 
