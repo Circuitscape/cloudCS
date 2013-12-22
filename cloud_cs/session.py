@@ -1,4 +1,4 @@
-import hashlib, time, logging, os
+import hashlib, time, logging
 from abc import ABCMeta, abstractmethod
 from common import Utils
 
@@ -24,14 +24,8 @@ class Session:
             
     def remove_temporary_files(self):
         outdir = self.local_work_dir
-        if None != outdir:
-            for root, dirs, files in os.walk(outdir, topdown=False):
-                for name in files:
-                    os.remove(os.path.join(root, name))
-                for name in dirs:
-                    os.rmdir(os.path.join(root, name))
-            os.rmdir(outdir)
-            logger.debug("removed temporary folder " + outdir)
+        Utils.rmdir(outdir)
+        logger.debug("removed temporary folder " + outdir)
 
     @staticmethod
     def extract_session_id(req):

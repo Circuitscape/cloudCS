@@ -39,6 +39,20 @@ class Utils:
         return tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=Utils.temp_files_root)
 
     @staticmethod
+    def rmdir(dir_path, contents_only=False):
+        if (None == dir_path) or (not os.path.exists(dir_path)):
+            return
+       
+        for root, dirs, files in os.walk(dir_path, topdown=False):
+            for name in files:
+                os.remove(os.path.join(root, name))
+            for name in dirs:
+                os.rmdir(os.path.join(root, name))
+                
+        if not contents_only:
+            os.rmdir(dir_path)
+
+    @staticmethod
     def hash(*args):
         return hashlib.sha1('_'.join(args)).hexdigest()
     

@@ -100,6 +100,8 @@ class CircuitscapeRunner(AsyncRunner):
                         output_folder = os.path.join(work_dir, 'output')
                         if not os.path.exists(output_folder):
                             os.mkdir(output_folder)
+                        else:
+                            Utils.rmdir(output_folder, True)
                         val = os.path.join(output_folder, 'results.out')
                     else:
                         # copy the file locally
@@ -154,6 +156,8 @@ class CircuitscapeRunner(AsyncRunner):
 #                     if None == store.copy_to_remote(output_cloud_folder, outfile):
 #                         qlogger.send_log_msg("error uploading " + name)
             qlogger.send_log_msg("Uploaded results to cloud store")
+            Utils.rmdir(output_folder, True)
+            os.remove(output_folder_zip)
         
         qlogger.send_result_msg(msg_type, {'complete': True, 'success': success})
                     
@@ -177,13 +181,7 @@ class CircuitscapeRunner(AsyncRunner):
             testsPassed = False
         finally:
             os.chdir(cwd)
-            if None != outdir:
-                for root, dirs, files in os.walk(outdir, topdown=False):
-                    for name in files:
-                        os.remove(os.path.join(root, name))
-                    for name in dirs:
-                        os.rmdir(os.path.join(root, name))
-                os.rmdir(outdir)
+            Utils.rmdir(outdir)
 
         qlogger.send_log_msg(strio.getvalue())
         strio.close()
