@@ -84,7 +84,7 @@
 				</div>				
 				<ul class="nav nav-tabs" id="input_tabs">
 				  <li class="active"><a href="#tab_input_types">Input Types</a></li>
-				  <li><a href="#tab_habitat_data">Habitat Data</a></li>
+				  <li><a href="#tab_habitat_data">Resistance Data</a></li>
 				  <li class="on_modeling_mode on_pairwise on_all-to-one on_one-to-all"><a href="#tab_focal_nodes">Focal Nodes</a></li>
 				  <li class="on_modeling_mode on_advanced"><a href="#tab_sources_and_grounds">Current Sources &amp; Grounds</a></li>
 				  <li><a href="#tab_execution_result_options">Execution Options &amp; Result Formats</a></li>
@@ -140,13 +140,13 @@
 						<form class="form-horizontal" role="form">
 							<fieldset>
 								<div class="form-group">
-									<label class="col-sm-2 control-label">Use Habitat Map</label>
+									<label class="col-sm-2 control-label">Use Resistance File</label>
 									<div class="col-sm-10 controls">
 										<span class="input-group" style="max-width: 700px">
-											<input id="habitat_file" class="form-control" type="text" style="min-width: 400px">
+											<input id="habitat_file" class="form-control" type="text" style="min-width: 380px">
 											<span id="habitat_file_select" class="server_file_dlg input-group-addon glyphicon glyphicon-folder-open"></span>
-											<span class="input-group-addon">&nbsp;&nbsp;as per cell&nbsp;&nbsp;</span>
-											<select class="form-control" name="habitat_data_type" id="habitat_data_type" style="max-width: 150px; min-width: 100px">
+											<span class="input-group-addon">&nbsp;&nbsp;values coded as&nbsp;&nbsp;</span>
+											<select class="form-control" name="habitat_data_type" id="habitat_data_type" style="max-width: 150px; min-width: 130px">
 												<option value="R">Resistances</option>
 												<option value="C">Conductances</option>
 											</select>
@@ -154,12 +154,12 @@
 									</div>
 								</div>
 							</fieldset>
-							<fieldset>
+							<fieldset class="on_raster">
 								<div class="form-group">
-									<label class="col-sm-2 control-label">Mask Habitat Map with</label>
+									<label class="col-sm-2 control-label">Mask Resistance Map with</label>
 									<div class="col-sm-10 controls">
 										<span class="input-group" style="max-width: 700px">
-											<input id="habitat_mask_file" class="form-control" type="text" style="min-width: 400px">
+											<input id="habitat_mask_file" class="form-control" type="text" style="min-width: 380px">
 											<span id="habitat_mask_file_select" class="server_file_dlg input-group-addon glyphicon glyphicon-folder-open"></span>
 										</span>
 										<p class="help-block">optional</p>
@@ -189,7 +189,7 @@
 									<label class="col-sm-2 control-label">Short Circuit Regions</label>
 									<div class="col-sm-10 controls">
 										<div class="input-group" style="max-width: 700px">
-											<input id="short_circuit_file" class="form-control" type="text" style="min-width: 400px">
+											<input id="short_circuit_file" class="form-control" type="text" style="min-width: 380px">
 											<span id="short_circuit_file_select" class="server_file_dlg input-group-addon glyphicon glyphicon-folder-open"></span>
 										</div>
 										<p class="help-block">optional</p>
@@ -242,7 +242,7 @@
 						<form class="form-horizontal" role="form">											
 							<fieldset>
 								<div class="form-group">
-									<label class="col-sm-2 control-label">Current Sources </label>
+									<label class="col-sm-2 control-label">Current Source File</label>
 									<div class="col-sm-10 controls">
 										<span class="input-group" style="max-width: 700px">
 											<div class="input-group">
@@ -256,12 +256,12 @@
 							</fieldset>														
 							<fieldset>
 								<div class="form-group">
-									<label class="col-sm-2 control-label">Ground Points</label>
+									<label class="col-sm-2 control-label">Ground Point File</label>
 									<div class="col-sm-10 controls">
 										<div class="input-group" style="max-width: 700px">
 											<input id="ground_points_file" class="form-control" type="text" style="min-width: 400px">
 											<span id="ground_points_file_select" class="server_file_dlg input-group-addon glyphicon glyphicon-folder-open"></span>
-											<span class="input-group-addon">&nbsp;&nbsp;with values as&nbsp;&nbsp;</span>
+											<span class="input-group-addon">&nbsp;&nbsp;values coded as&nbsp;&nbsp;</span>
 											<select class="form-control" name="ground_value_type" id="ground_value_type" style="max-width: 150px">
 												<option value="R">Resistances</option>
 												<option value="C">Conductances</option>
@@ -291,7 +291,7 @@
 						<form class="form-horizontal" role="form">
 							<fieldset>
 								<div class="form-group">
-									<label class="col-sm-2 control-label">Output Options</label>
+									<label class="col-sm-2 control-label">Output File Path</label>
 									<div class="col-sm-10 controls">
 										<div class="input-group" style="max-width: 700px">
 											<input id="output_file" class="form-control" type="text" style="min-width: 400px">
@@ -300,8 +300,8 @@
 										<input type="checkbox" id="write_volt_maps"> Write Voltage Maps<br/>
 										<input type="checkbox" id="write_cur_maps"> Write Current Maps<br/>
 										<span class="on_modeling_mode on_pairwise on_one-to-all on_all-to-one">
-											<input type="checkbox" id="write_cum_cur_map_only"> Write cumulative current map only<br/>
 											<input type="checkbox" id="write_max_cur_maps"> Write maximum of current maps<br/>											
+											<input type="checkbox" id="write_cum_cur_map_only"> Write cumulative current map (and maximum if selected) only<br/>
 										</span>
 										<input type="checkbox" id="log_transform_maps"> Log-transform output current maps<br/>
 										<input type="checkbox" id="compress_grids"> Compress output grids<br/>
@@ -312,7 +312,7 @@
 								<div class="form-group">
 									<label class="col-sm-2 control-label">Parallel Processors</label>
 									<div class="col-sm-10 controls">
-										<input type="text" id="num_parallel_procs"/>
+										<input type="text" id="num_parallel_procs" disabled="disabled"/>
 										<input type="checkbox" id="use_max_parallel"> Use maximum possible<br/>
 										<p class="help-block">select how many parallel processors to use</p>
 									</div>

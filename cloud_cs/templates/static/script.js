@@ -198,10 +198,10 @@ function populate_config(cfg) {
 		set_form_field('cell_conn_type', cfg.connect_four_neighbors_only ? 4 : 8);
 		set_form_field('cell_calc_type', cfg.connect_using_avg_resistances ? 'R' : 'C');
 		set_form_field('short_circuit_file', cfg.use_polygons ? cfg.polygon_file : ''); 
+		set_form_field('habitat_mask_file', cfg.use_mask ? cfg.mask_file : '');
 	}
 	set_form_field('habitat_file', cfg.habitat_file);
 	set_form_field('habitat_data_type', cfg.habitat_map_is_resistances ? 'R' : 'C');
-	set_form_field('habitat_mask_file', cfg.use_mask ? cfg.mask_file : '');
 
 	if(cfg.scenario == 'advanced') {
 		set_form_field('current_sources_file', cfg.source_file);
@@ -226,11 +226,20 @@ function populate_config(cfg) {
 	
 	if(cfg.scenario == 'pairwise') {
 		num_parallel_procs = set_form_field('num_parallel_procs', cfg.parallelize ? cfg.max_parallel : '1');
+
 		if(cfg.parallelize && (cfg.max_parallel == 0)) {
 			set_form_field('use_max_parallel', true, 'checkbox');
+			$('#num_parallel_procs').spinedit('setMinimum', 0);
+			$('#num_parallel_procs').spinedit('setMaximum', 0);
+			$('#num_parallel_procs').spinedit('setStep', 0);
+			$('#num_parallel_procs').spinedit('setValue', 0);
 		}
 		else {
 			set_form_field('use_max_parallel', false, 'checkbox');
+			$('#num_parallel_procs').spinedit('setMinimum', 1);
+			$('#num_parallel_procs').spinedit('setMaximum', 10);
+			$('#num_parallel_procs').spinedit('setStep', 1);
+			$('#num_parallel_procs').spinedit('setValue', num_parallel_procs);
 		}
 		set_form_field('low_memory_mode', cfg.low_memory_mode, 'checkbox');
 	}
@@ -259,6 +268,12 @@ function run_job() {
 			cfg.use_polygons = true;
 			cfg.polygon_file = filename;
 		}
+
+		filename = 	get_form_field('habitat_mask_file');
+		if(filename.length > 0) {
+			cfg.mask_file = filename; 
+			cfg.use_mask = true;
+		}
 	}
 
 	filename = 	get_form_field('habitat_file');
@@ -266,12 +281,6 @@ function run_job() {
     	cfg.habitat_file = filename;
     	cfg.habitat_map_is_resistances = (get_form_field('habitat_data_type') == 'R');
     }
-
-	filename = 	get_form_field('habitat_mask_file');
-	if(filename.length > 0) {
-		cfg.mask_file = filename; 
-		cfg.use_mask = true;
-	}
 	
 	if(cfg.scenario == 'advanced') {
 		filename = 	get_form_field('current_sources_file');
@@ -468,6 +477,20 @@ function init_circuitscape(ws_url, sess_id) {
 	});
 	
 	$('#use_max_parallel').click(function(e){
-		set_form_field('num_parallel_procs', '0');
+		max_parallel = get_form_field('use_max_parallel', 'checkbox');
+		if(max_parallel) {
+			set_form_field('num_parallel_procs', '0');
+			$('#num_parallel_procs').spinedit('setMinimum', 0);
+			$('#num_parallel_procs').spinedit('setMaximum', 0);
+			$('#num_parallel_procs').spinedit('setStep', 0);
+			$('#num_parallel_procs').spinedit('setValue', 0);
+		}
+		else {
+			set_form_field('num_parallel_procs', '1');
+			$('#num_parallel_procs').spinedit('setMinimum', 1);
+			$('#num_parallel_procs').spinedit('setMaximum', 10);
+			$('#num_parallel_procs').spinedit('setStep', 1);
+			$('#num_parallel_procs').spinedit('setValue', 1);
+		}
 	});
 };
