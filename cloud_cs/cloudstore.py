@@ -18,6 +18,10 @@ class CloudStore:
         raise NotImplementedError
     
     @abstractmethod
+    def to_file_name(self, file_path):
+        raise NotImplementedError
+    
+    @abstractmethod
     def copy_to_local(self, file_path, local_path):
         raise NotImplementedError
 
@@ -68,7 +72,11 @@ class GoogleDriveStore(CloudStore):
     def to_file_id(file_str):
         comps = file_str.split('/')
         return comps[len(comps)-1]
-        
+
+    def to_file_name(self, file_str):
+        comps = file_str.split('/')
+        return comps[len(comps)-2]
+                
     def copy_to_local(self, file_id, local_path):
         logger.debug("got file_id " + str(file_id) + " of type " + str(type(file_id)))
         if file_id.startswith('gdrive://'):
@@ -119,10 +127,19 @@ class GoogleDriveStore(CloudStore):
             logger.error('File empty or not found: %s' % (str(file_id),))
             return None        
     
-    def copy_to_remote(self, folder_id, local_path, mime_type='text/plain'):
+    def copy_to_remote(self, folder_id, local_path, mime_type='text/plain', extract_folder_id=False):
         try:
             if folder_id.startswith('gdrive://'):
                 folder_id = GoogleDriveStore.to_file_id(folder_id)
+                if extract_folder_id:
+                    folder_template_file = self.service.files().get(fileId=folder_id).execute()
+                    parents = folder_template_file.get('parents')
+                else:
+                    parents = [{'id': folder_id}]
+            elif isinstance(folder_id, list):
+                parents = folder_id
+            else:
+                parents = [{'id': folder_id}]
 
             media_body = MediaFileUpload(local_path, mimetype='text/plain', resumable=True)
             _local_dir, local_name = os.path.split(local_path)
@@ -130,7 +147,7 @@ class GoogleDriveStore(CloudStore):
                     'title': local_name,
                     'description': local_name,
                     'mimeType': mime_type,
-                    'parents': [{'id': folder_id}]
+                    'parents': parents
             }
             uploaded_file = self.service.files().insert(body=body, media_body=media_body).execute()
             logger.debug("uploaded local file " + local_path + " to gdrive file " + str(uploaded_file))

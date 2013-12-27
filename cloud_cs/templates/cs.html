@@ -4,11 +4,11 @@
 		<meta charset="utf-8">
 		<meta http-equiv="X-UA-Compatible" content="IE=edge">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<meta name="description" content="Circuitscape {{version}}">
+		<meta name="description" content="Circuitscape {%if filedlg_type == "google"%}Cloud{%end%} {{version}}">
 		<meta name="author" content="tan">
 		<link rel="shortcut icon" href="/static/cs_logo.ico">
 
-		<title>Circuitscape {{version}}</title>
+		<title>Circuitscape {%if filedlg_type == "google"%}Cloud{%end%} {{version}}</title>
 
 		<link href="/ext/bootstrap/css/bootstrap.css" rel="stylesheet">
 
@@ -30,7 +30,7 @@
 							<span class="icon-bar"></span>
 							<span class="icon-bar"></span>
 						</button>
-						<a class="navbar-brand" href="#about" data-toggle="modal" data-target="#about_div">Circuitscape</a>
+						<a class="navbar-brand" href="#about" data-toggle="modal" data-target="#about_div">Circuitscape{%if filedlg_type == "google"%} Cloud{%end%}</a>
 					</div>
 					<div class="collapse navbar-collapse">
 						<ul class="nav navbar-nav">
@@ -48,7 +48,11 @@
 									</li-->
 									<li>
 										<a href="#" id="menu_load_file_select" class="server_file_dlg">Load from file</a>
-										<input id="menu_load_file" type="text">
+										<input id="menu_load_file" type="text" style="display: none;">
+									</li>
+									<li>
+										<a href="#" id="menu_batch_folder_select" class="server_file_dlg">Run Batch</a>
+										<input id="menu_batch_folder" type="text" style="display: none;">
 									</li>
 									<!--li>
 										<a href="#" id="menu_save_to_file">Save to file</a>
@@ -424,7 +428,7 @@
 					</div>
 					<div class="modal-footer">
 						<input type="text" style="width: 385px; display: inline" id="filedlg_filename" class="form-control"> 
-						<a id="btn_filedlg_div_sel" href="#" class="btn btn-primary">Select</a>
+						<a id="btn_filedlg_div_sel" href="#" class="btn btn-primary" data-dismiss="modal" onclick="file_dlg_on_select();">Select</a>
 						<a href="#" class="btn btn-primary" data-dismiss="modal">Cancel</a>							
 					</div>
 				</div>
@@ -436,7 +440,7 @@
 				<div class="modal-content">
 					<div class="modal-header">
 						<a class="close" data-dismiss="modal">&times;</a>
-						<h3>About Circuitscape</h3>
+						<h3>About Circuitscape {%if filedlg_type == "google"%}Cloud{%end%}</h3>
 					</div>
 					<div class="modal-body">
 						<img src="static/cs_logo.jpg" class="pull-left" style="margin-right: 10px"/>

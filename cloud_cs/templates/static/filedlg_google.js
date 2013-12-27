@@ -14,7 +14,8 @@ var file_dlg_headers = {
 	'current_sources_file_select': "Choose Current Sources File",
 	'ground_points_file_select': "Choose Ground Points File",
 	'output_file_select': "Choose Output Folder",
-	'menu_load_file_select': "Choose a Configuration File"
+	'menu_load_file_select': "Choose a Configuration File",
+	'menu_batch_folder_select': "Choose Batch Zip File"
 };
 
 var file_dlg_types = {
@@ -27,7 +28,8 @@ var file_dlg_types = {
 	'current_sources_file_select': '',
 	'ground_points_file_select': '',
 	'output_file_select': 'application/vnd.google-apps.folder',
-	'menu_load_file_select': ''
+	'menu_load_file_select': '',
+	'menu_batch_folder_select': ''
 };
 
 function file_dlg_populate(data) {

@@ -39,6 +39,16 @@ class Utils:
         return tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=Utils.temp_files_root)
 
     @staticmethod
+    def mkdtemp_if_exists(suffix="", prefix="", dir="."):
+        dirname = suffix + prefix
+        tocreate = os.path.join(dir, dirname)
+        if os.path.exists(tocreate):
+            return tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=dir)
+        else:
+            os.mkdir(tocreate)
+            return tocreate
+
+    @staticmethod
     def rmdir(dir_path, contents_only=False):
         if (None == dir_path) or (not os.path.exists(dir_path)):
             return
@@ -83,6 +93,10 @@ class Utils:
             os.mkdir(creds_path)
         return creds_path 
 
+    @staticmethod
+    def uncompress_folder(directory, zipfilename):
+        with zipfile.ZipFile(zipfilename, 'r') as z:
+            z.extractall(directory)
 
     @staticmethod
     def compress_folder(directory, zipfilename):
@@ -188,14 +202,20 @@ class WebSocketLogger(logging.Handler):
 
 
 class QueueLogger(logging.Handler):
-    def __init__(self, q):
+    def __init__(self, q, filter_strings):
         logging.Handler.__init__(self)
         self.q = q
+        self.filter_strings = filter_strings
         self.level = logging.DEBUG
 
     def flush(self):
         pass
 
+    def filter_msg(self, msg):
+        for pattern in self.filter_strings:
+            msg = msg.replace(pattern, "")
+        return msg
+    
     def emit(self, record):
         msg = self.format(record)
         msg = msg.strip('\r')
@@ -203,18 +223,21 @@ class QueueLogger(logging.Handler):
         self.send_log_msg(msg)
 
     def send_log_msg(self, msg):
+        msg = self.filter_msg(msg)
         self.q.put((BaseMsg.SHOW_LOG, msg))
     
     def send_result_msg(self, msg_type, ret):
         self.q.put((msg_type, ret))
 
     def send_error_msg(self, msg):
+        msg = self.filter_msg(msg)
         self.q.put((BaseMsg.RSP_ERROR, msg))
 
 class AsyncRunner(object):
     __metaclass__ = ABCMeta
     
     DEFAULT_REPLY = None
+    FILTER_STRINGS = []
     
     def __init__(self, wslogger, wsmsg, method, *args):
         q = Queue()
@@ -222,7 +245,7 @@ class AsyncRunner(object):
         
         args = list(args)
         args.insert(0, in_msg_type)
-        args.insert(0, QueueLogger(q))
+        args.insert(0, QueueLogger(q, AsyncRunner.FILTER_STRINGS))
 
         self.results = None
         self.p = Process(target=method, args=args)

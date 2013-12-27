@@ -41,6 +41,8 @@ class WSMsg(BaseMsg):
     REQ_ABORT_JOB = 11
     RSP_ABORT_JOB = 12
 
+    REQ_RUN_BATCH = 13
+    RSP_RUN_BATCH = 14
 
 class CircuitscapeRunner(AsyncRunner):
     def __init__(self, wslogger, wsmsg, method, *args):
@@ -52,7 +54,7 @@ class CircuitscapeRunner(AsyncRunner):
     
     @staticmethod
     def check_role_limits(roles, cfg, qlogger):
-        if "admin" in roles:
+        if ("admin" in roles) or ("standalone" in roles):
             return (True, None)
         
         try:
@@ -143,7 +145,7 @@ class CircuitscapeRunner(AsyncRunner):
             
             for attempt in range(1,4):
                 qlogger.send_log_msg("Uploading results to cloud store...")
-                if None == store.copy_to_remote(output_cloud_folder, output_folder_zip, 'application/zip'):
+                if None == store.copy_to_remote(output_cloud_folder, output_folder_zip, mime_type='application/zip'):
                     qlogger.send_log_msg("Error uploading output.zip. attempt " + str(attempt) + " of 3")
                     time.sleep(5)
                 else:
@@ -186,7 +188,132 @@ class CircuitscapeRunner(AsyncRunner):
         qlogger.send_log_msg(strio.getvalue())
         strio.close()
         qlogger.send_result_msg(msg_type, {'complete': True, 'success': testsPassed})
-    
+
+
+    @staticmethod
+    def run_batch(qlogger, msg_type, roles, msg_data, work_dir, storage_creds, store_in_cloud):
+        cwd = os.getcwd()
+        store = GoogleDriveStore(storage_creds) if (None != storage_creds) else None
+        
+        if store_in_cloud:
+            batch_zip = msg_data
+            batch_zip_name = os.path.splitext(store.to_file_name(batch_zip))[0]  + '_output.zip'
+            qlogger.send_log_msg("Reading from cloud store: " + batch_zip)
+            batch_folder = Utils.mkdtemp(prefix="batch_")
+            batch_zip = store.copy_to_local(batch_zip, work_dir)
+            Utils.uncompress_folder(batch_folder, batch_zip)
+            os.remove(batch_zip)
+            
+            output_folder_zip = os.path.join(work_dir, batch_zip_name)
+        else:
+            batch_folder = msg_data
+            qlogger.send_log_msg("Running batch with all configurations (.ini files) under folder: " + batch_folder)
+            
+        
+        output_root_folder = Utils.mkdtemp_if_exists(prefix="output", dir=batch_folder)
+
+        if store_in_cloud:
+            qlogger.send_log_msg("Outputs would be uploaded to your cloud store as " + batch_zip_name)
+        else:
+            qlogger.send_log_msg("Outputs would be stored under folder: " + output_root_folder)
+        
+        num_success = 0
+        num_failed = 0
+        
+        # collect all configuration names
+        config_files = []
+        for root, _dirs, files in os.walk(batch_folder):
+            for file_name in files:
+                if not file_name.endswith(".ini"):
+                    continue
+                config_files.append(os.path.join(root, file_name))
+        
+        qlogger.send_log_msg("Found " + str(len(config_files)) + " configuration files.")
+        
+        batch_success = False
+        try:
+            for config_file in config_files:
+                root, file_name = os.path.split(config_file)
+                qlogger.send_log_msg("Loading configuration: " + config_file)
+         
+                cfg = CSConfig(config_file)
+                
+                qlogger.send_log_msg("Verifying configuration...")
+                (all_options_valid, message) = cfg.check()
+                #qlogger.send_log_msg("Verified configuration with result: " + str(all_options_valid))
+                
+                if all_options_valid:
+                    #qlogger.send_log_msg("Verifying all paths are relative...")
+                    all_options_valid = cfg.are_all_paths_relative();
+                    if not all_options_valid:
+                        message = "All file paths in configuration must be relative to location of configuration file."
+                
+                #qlogger.send_log_msg("Verified configuration with result: " + str(all_options_valid))
+                if all_options_valid:
+                    qlogger.send_log_msg("Verifying profile limits...")
+                    (all_options_valid, message) = CircuitscapeRunner.check_role_limits(roles, cfg, qlogger)
+                    
+                if not all_options_valid:
+                    qlogger.send_error_msg(message)
+                    num_failed += 1
+                else:
+                    solver_failed = True
+                    output_folder = os.path.join(output_root_folder, os.path.splitext(file_name)[0])
+                    os.mkdir(output_folder)
+                    cfg.output_file = os.path.join(output_folder, os.path.basename(cfg.output_file))
+                    os.chdir(root)
+                    
+                    outdir, _out_file = os.path.split(cfg.output_file)
+                    
+                    try:
+                        qlogger.send_log_msg("Storing final configuration...")
+                        configFile = os.path.join(outdir, 'circuitscape.ini')
+                        cfg.write(configFile)
+            
+                        cs = Compute(configFile, qlogger)
+                        result, solver_failed = cs.compute()
+                        qlogger.send_log_msg("Result: \n" + str(result))
+                    except Exception as e:
+                        message = str(e)
+                        qlogger.send_error_msg(message)
+                    
+                    if solver_failed:
+                        num_failed += 1
+                    else:
+                        num_success += 1
+
+            qlogger.send_log_msg("Batch run done for " + str(len(config_files)) + " configuration files. Success: " + str(num_success) + ". Failures: " + str(num_failed))
+            
+            if num_success > 0:
+                if store_in_cloud:
+                    qlogger.send_log_msg("Compressing results for upload...")
+                    Utils.compress_folder(output_root_folder, output_folder_zip)
+
+                    for attempt in range(1,4):
+                        qlogger.send_log_msg("Uploading results to cloud store...")
+                        if None == store.copy_to_remote(msg_data, output_folder_zip, mime_type='application/zip', extract_folder_id=True):
+                            qlogger.send_log_msg("Error uploading output.zip. attempt " + str(attempt) + " of 3")
+                            time.sleep(5)
+                        else:
+                            qlogger.send_log_msg("Uploaded results to cloud store as " + batch_zip_name)
+                            break
+                else:
+                    qlogger.send_log_msg("Outputs under folder: " + output_root_folder)
+                batch_success = True
+        except Exception as e:
+            qlogger.send_log_msg("Error during batch run: " + str(e))
+        finally:
+            os.chdir(cwd)
+            if store_in_cloud:
+                try:
+                    Utils.rmdir(batch_folder)
+                    if os.path.exists(output_folder_zip):
+                        os.remove(output_folder_zip)
+                except:
+                    qlogger.send_log_msg("Could not clear temporary files.")
+            
+        qlogger.send_result_msg(msg_type, {'complete': True, 'success': batch_success})
+
 
 class WebSocketHandler(tornado.websocket.WebSocketHandler):
     def open(self):
@@ -220,6 +347,8 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                     response, is_shutdown_msg = self.handle_run_verify(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_RUN_JOB):
                     response, is_shutdown_msg = self.handle_run_job(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_RUN_BATCH):
+                    response, is_shutdown_msg = self.handle_run_batch(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_ABORT_JOB):
                     response, is_shutdown_msg = self.handle_abort_job(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
@@ -290,15 +419,33 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         if multiuser:
             work_dir = self.work_dir
             storage_creds = self.storage_creds
+            user_role = self.sess.user_role()
         else:
             work_dir = storage_creds = None
-        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, self.sess.user_role(), wsmsg.nv['data'], work_dir, storage_creds, multiuser)
+            user_role = 'standalone'
+        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, user_role, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
+        return (None, False)
+
+    def handle_run_batch(self, wsmsg):
+        global SRVR_CFG
+        wslogger = WebSocketLogger(self)
+        multiuser = SRVR_CFG.multiuser
+        if multiuser:
+            work_dir = self.work_dir
+            storage_creds = self.storage_creds
+            user_role = self.sess.user_role()
+        else:
+            work_dir = storage_creds = None
+            user_role = 'standalone'
+        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_batch, user_role, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
         return (None, False)
 
 
     def handle_run_verify(self, wsmsg):
+        global SRVR_CFG
         wslogger = WebSocketLogger(self)
-        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_verify, self.sess.user_role())
+        user_role = self.sess.user_role() if SRVR_CFG.multiuser else 'standalone'
+        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_verify, user_role)
         return (None, False)
 
 
@@ -449,6 +596,8 @@ def run_webgui(config):
     logger.debug("headless: " + str(SRVR_CFG.headless))
 
     AsyncRunner.DEFAULT_REPLY = {'complete': True, 'success': False}
+    if (Utils.temp_files_root != None):
+        AsyncRunner.FILTER_STRINGS = [Utils.temp_files_root]
     AsyncRunner.LOG_MSG = WSMsg.SHOW_LOG
 
     BaseMsg.logger = logger

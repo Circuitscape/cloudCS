@@ -36,3 +36,10 @@ Run `bin/cswebgui.py --config cloudCS.cfg` where the file `cloudCS.cfg` is the s
 
 For more details on available options, refer to the comments in the sample configuration file `cloudCS.cfg.sample`
 
+### Batch Run
+- Prepare a local folder with all data files and configuration files within it.
+- Files can be organized under sub folders.
+- Configuration files must refer to relative paths starting from under the root folder.
+- Compress the local root folder into a `zip` archive and upload on to Google Drive.
+- Click `Run Batch` in the cloudCS menu and select the uploaded archive.
+- The `zip` archive will be downloaded and run on the cloudCS server and results would be archived and uploaded back on to Google Drive.
