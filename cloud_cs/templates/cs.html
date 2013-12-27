@@ -313,7 +313,7 @@
 									<label class="col-sm-2 control-label">Parallel Processors</label>
 									<div class="col-sm-10 controls">
 										<input type="text" id="num_parallel_procs" disabled="disabled"/>
-										<input type="checkbox" id="use_max_parallel"> Use maximum possible<br/>
+										<span id="use_max_parallel_div"><input type="checkbox" id="use_max_parallel"> Use maximum possible<br/></span>
 										<p class="help-block">select how many parallel processors to use</p>
 									</div>
 								</div>
@@ -322,8 +322,8 @@
 								<div class="form-group">
 									<label class="col-sm-2 control-label">Memory Saving Options</label>
 									<div class="col-sm-10 controls">
-										<input type="checkbox" id="preemptive_memory_release"> Preemptively release memory
-										<span class="on_modeling_mode on_pairwise"><br/><input type="checkbox" id="low_memory_mode"> Run in low memory mode<br/></span>
+										<span id='preemptive_memory_release_div'><input type="checkbox" id="preemptive_memory_release"> Preemptively release memory</span>
+										<span id="low_memory_mode_div" class="on_modeling_mode on_pairwise"><br/><input type="checkbox" id="low_memory_mode"> Run in low memory mode<br/></span>
 										<p class="help-block">enabling may result in slower execution</p>
 									</div>
 								</div>
@@ -332,7 +332,7 @@
 								<div class="form-group">
 									<label class="col-sm-2 control-label">Log Level </label>
 									<div class="col-sm-10 controls">
-										<div class="input-group" style="max-width: 700px">
+										<div class="input-group" style="max-width: 700px; min-width: 150px">
 											<select class="form-control" name="ground_value_type" id="log_level">
 												<option value="DEBUG">Debug</option>
 												<option value="INFO">Info</option>
@@ -348,8 +348,8 @@
 									<label class="col-sm-2 control-label">Additional Logs </label>
 									<div class="col-sm-10 controls">
 										<div class="input-group" style="max-width: 700px">
-											<input type="checkbox" id="print_rusages"> Resource usage information<br/>
-											<input type="checkbox" id="print_timings"> Completion times
+											<span id="print_rusages_div"><input type="checkbox" id="print_rusages"> Resource usage information<br/></span>
+											<span id="print_timings_div"><input type="checkbox" id="print_timings"> Completion times</span>
 										</div>
 									</div>
 								</div>

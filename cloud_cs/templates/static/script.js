@@ -413,6 +413,41 @@ function alert_in_page(msg, level) {
 	$('#in_page_alert').show();
 };
 
+var TOOLTIPS = {
+	'btn_run' : 'Run with the chosen configuration.',
+	//'input_format_raster': 'Raster map of resistances',
+	//'input_format_network': 'Network of nodes connected by links',
+	'input_format': ['Choose an input format,<br/> raster map of resistances or <br/>network of connected nodes', 'right'],
+	'preemptive_memory_release_div': 'Intermittently pause to release unused memory.',
+	'low_memory_mode_div': 'Recompute memory intensive data whenever possible instead of caching in memory.',
+	'log_level': ['Verbosity of messages during execution.', 'top'],
+	'print_rusages_div': 'Log machine resources consumed at critical steps. Helps in debugging/fine tuning.',
+	'print_timings_div': 'Log time taken at critical steps. Helps in debugging/fine tuning.',
+	'use_max_parallel_div': 'Use all available processors on the machine'
+};
+
+function create_tooltips() {		
+	for(elem_id in TOOLTIPS) {
+		options = {
+			'trigger': 'hover',
+			'delay': 100,
+		};
+		
+		settings = TOOLTIPS[elem_id];
+		if($.isArray(settings)) {
+			options['title'] = settings[0];
+			options['placement'] = settings[1];
+		}
+		else {
+			options['title'] = settings;
+		}
+		if ((options['title']).indexOf('<') != -1) options['html'] = true;
+		
+		
+		$('#'+elem_id).tooltip(options);	
+	}
+};
+
 function init_circuitscape(ws_url, sess_id) {
 	cs_ws_url = ws_url;
 	cs_session = sess_id;
@@ -493,4 +528,6 @@ function init_circuitscape(ws_url, sess_id) {
 			$('#num_parallel_procs').spinedit('setValue', 1);
 		}
 	});
+	
+	create_tooltips();
 };
