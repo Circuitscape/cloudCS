@@ -85,10 +85,14 @@ class Session:
     def storage(self):
         return (self.get('storage_creds'), self.get('store'))
 
+    @abstractmethod
+    def check_session_timeouts(self):
+        raise NotImplementedError
 
 
 class SessionInMemory(Session):
     SESS_STORE = {}
+    srvr_cfg = None
     
     def __init__(self, user):
         self.user = user
@@ -138,3 +142,44 @@ class SessionInMemory(Session):
     def logout_all():
         for sess in SessionInMemory.SESS_STORE.values():
             sess.logout()
+
+    @staticmethod
+    def check_task_timeouts():
+        num_timeouts = 0
+        time_now = time.time()
+        timeout_mins = SessionInMemory.cfg().cfg_get("timeout_execution", int, 300)
+        logger.debug("timeout_execution:" + str(timeout_mins))
+        for sess in SessionInMemory.SESS_STORE.values():
+            if (not hasattr(sess, 'task')) or (None == sess.task):
+                continue
+            task = sess.task 
+            age = int((time_now - task.creation_time)/60)
+            logger.debug("task for session " + str(sess.sess_id) + " created at:" + str(task.creation_time) + " age:" + str(age))
+            if age > timeout_mins:
+                try:
+                    num_timeouts += 1
+                    task.wslogger.send_error_msg("Task took too long. Timed out.")
+                    task.abort()
+                except:
+                    logger.error("error timing out task in sess id " + str(sess.sess_id))
+        return num_timeouts
+
+    @staticmethod
+    def check_session_timeouts():
+        num_timeouts = 0
+        time_now = time.time()
+        timeout_mins = SessionInMemory.cfg().cfg_get("timeout_session", int, 360)
+        logger.debug("timeout_session:" + str(timeout_mins))
+        for sess in SessionInMemory.SESS_STORE.values():
+            age = int((time_now - sess.creation_time)/60)
+            logger.debug("session " + str(sess.sess_id) + " created at:" + str(sess.creation_time) + " age:" + str(age))
+            if age > timeout_mins:
+                try:
+                    num_timeouts += 1
+                    if hasattr(sess, 'task') and (None != sess.task):
+                        sess.task.wslogger.send_error_msg("Session exceeded time slot. Timed out.")
+                        sess.task.abort()
+                    sess.logout()
+                except:
+                    logger.error("error timing out session id " + str(sess.sess_id))
+        return num_timeouts

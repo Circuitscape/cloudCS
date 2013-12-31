@@ -40,6 +40,12 @@ SECURE_SALT=change_this_to_a_random_string
 # Path where to store temporary files during server execution
 temp_dir=
 
+# Timeouts (In minutes)
+# timeout_execution: Maximum time allowed per task (default 5 hours)
+# timeout_session: Maximum time allowed per login session (default 6 hours). This timeout applies irrespective of whether there is session activity.
+timeout_execution=300
+timeout_session=360
+
 # Google API keys and secrets
 # These are required to support Google authentication and Google Drive access
 # Can be obtained after registering circuitscape application with Google.

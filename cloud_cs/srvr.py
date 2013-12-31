@@ -50,7 +50,8 @@ class CircuitscapeRunner(AsyncRunner):
     
     def completed(self):
         if (None != self.wslogger) and (None != self.wslogger.dest):
-            self.wslogger.dest.task = None
+            websock = self.wslogger.dest
+            websock.task = websock.sess.task = None
     
     @staticmethod
     def check_role_limits(roles, cfg, qlogger):
@@ -315,12 +316,14 @@ class CircuitscapeRunner(AsyncRunner):
         qlogger.send_result_msg(msg_type, {'complete': True, 'success': batch_success})
 
 
-class WebSocketHandler(tornado.websocket.WebSocketHandler):
+class WebSocketHandler(tornado.websocket.WebSocketHandler):    
     def open(self):
+        global logger
         self.is_authenticated = False
         logger.debug("websocket connection opened")
             
     def on_close(self):
+        global logger
         self.is_authenticated = False
         logger.debug("websocket connection closed")
 
@@ -423,7 +426,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         else:
             work_dir = storage_creds = None
             user_role = 'standalone'
-        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, user_role, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
+        self.task = self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, user_role, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
         return (None, False)
 
     def handle_run_batch(self, wsmsg):
@@ -437,7 +440,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         else:
             work_dir = storage_creds = None
             user_role = 'standalone'
-        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_batch, user_role, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
+        self.task = self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_batch, user_role, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
         return (None, False)
 
 
@@ -445,7 +448,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         global SRVR_CFG
         wslogger = WebSocketLogger(self)
         user_role = self.sess.user_role() if SRVR_CFG.multiuser else 'standalone'
-        self.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_verify, user_role)
+        self.task = self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_verify, user_role)
         return (None, False)
 
 
@@ -474,6 +477,7 @@ class IndexPageHandler(PageHandlerBase):
     def get(self):
         #logger.debug("got request url " + self.request.full_url())
         global SRVR_CFG
+        global logger
         if SRVR_CFG.multiuser:
             self.sess_id = sess_id = Session.extract_session_id(self)
             self.sess = sess = Session.get_session(sess_id)
@@ -551,6 +555,23 @@ class Application(tornado.web.Application):
         }
         tornado.web.Application.__init__(self, handlers, **settings)
 
+    @staticmethod
+    def check_sess_and_task_timeouts():
+        global logger
+        logger.debug("checking task timeouts")
+        num_timeouts = Session.check_task_timeouts()
+        logger.debug("timed out " + str(num_timeouts) + " tasks")
+        
+        logger.debug("checking session timeouts")
+        num_timeouts = Session.check_session_timeouts()
+        logger.debug("timed out " + str(num_timeouts) + " sessions")
+
+
+    def start_session_and_task_monitor(self):
+        # start the session and task timeout monitor
+        self.timer = tornado.ioloop.PeriodicCallback(Application.check_sess_and_task_timeouts, 1000*60)
+        self.timer.start()
+        
 def stop_webserver(from_signal=False):
     ioloop = tornado.ioloop.IOLoop.instance()
     if from_signal:
@@ -601,10 +622,15 @@ def run_webgui(config):
     AsyncRunner.LOG_MSG = WSMsg.SHOW_LOG
 
     BaseMsg.logger = logger
-    server = tornado.httpserver.HTTPServer(Application())
+    app = Application()
+    server = tornado.httpserver.HTTPServer(app)
     server.listen(SRVR_CFG.port, address=SRVR_CFG.listen_ip)
     if not SRVR_CFG.headless:
         webbrowser.open(SRVR_CFG.http_url)
+
+    if SRVR_CFG.multiuser:
+        # start the session and task timeout monitor
+        app.start_session_and_task_monitor()    
     
     try:
         tornado.ioloop.IOLoop.instance().start()

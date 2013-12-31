@@ -1,4 +1,4 @@
-import traceback, tempfile, os, hashlib, pickle, zipfile, json, logging, signal
+import traceback, tempfile, os, hashlib, pickle, zipfile, json, logging, signal, time
 from multiprocessing import Process, Queue
 from abc import ABCMeta, abstractmethod
 
@@ -247,13 +247,14 @@ class AsyncRunner(object):
         args.insert(0, in_msg_type)
         args.insert(0, QueueLogger(q, AsyncRunner.FILTER_STRINGS))
 
+        self.creation_time = time.time()
         self.results = None
         self.p = Process(target=method, args=args)
         self.q = q
         self.in_msg_type = in_msg_type
         self.wslogger = wslogger
         self.wsmsg = wsmsg
-        self.p.start()        
+        self.p.start()
         self._start_handler(q)
             
     def _start_handler(self, q):
