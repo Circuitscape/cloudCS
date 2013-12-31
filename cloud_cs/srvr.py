@@ -238,7 +238,8 @@ class CircuitscapeRunner(AsyncRunner):
                 qlogger.send_log_msg("Loading configuration: " + config_file)
          
                 cfg = CSConfig(config_file)
-                
+         
+                os.chdir(root)       
                 qlogger.send_log_msg("Verifying configuration...")
                 (all_options_valid, message) = cfg.check()
                 #qlogger.send_log_msg("Verified configuration with result: " + str(all_options_valid))
@@ -262,7 +263,6 @@ class CircuitscapeRunner(AsyncRunner):
                     output_folder = os.path.join(output_root_folder, os.path.splitext(file_name)[0])
                     os.mkdir(output_folder)
                     cfg.output_file = os.path.join(output_folder, os.path.basename(cfg.output_file))
-                    os.chdir(root)
                     
                     outdir, _out_file = os.path.split(cfg.output_file)
                     
