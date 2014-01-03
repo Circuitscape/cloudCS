@@ -49,6 +49,16 @@ var ws_conn_authenticated = false;
 var ws_conn = null;
 var ws_conn_onopen = null;
 var ws_conn_onmessage = null;
+var ws_conn_onclose = null;
+
+function ignore_close_callback() {
+	ws_conn_onclose = null;
+};
+
+function close_ws(override_callback) {
+	if (override_callback) ws_conn_onclose = null;
+	ws_conn.close();
+};
 
 function send_ws(msg_type, data){
 	if(null != ws_conn) {
@@ -57,11 +67,12 @@ function send_ws(msg_type, data){
 			'data': data
 		}));		
 	}
-}
+};
 
-function do_ws(onopen, onmessage) {
+function do_ws(onopen, onmessage, onclose) {
 	ws_conn_onopen = onopen;
 	ws_conn_onmessage = onmessage;
+	ws_conn_onclose = onclose;
 	
 	if(cs_session != '') {
 		if(null == ws_conn) {
@@ -75,7 +86,8 @@ function do_ws(onopen, onmessage) {
 			};
 			
 			ws_conn.onclose = function(evt) {
-				ws_conn = ws_conn_onopen = ws_conn_onmessage = null;
+				if(ws_conn_authenticated && (null != ws_conn_onclose)) ws_conn_onclose();
+				ws_conn = ws_conn_onopen = ws_conn_onmessage = ws_conn_onclose = null;
 				ws_conn_authenticated = false;
 			};
 			
@@ -106,7 +118,7 @@ function do_ws(onopen, onmessage) {
 			ws_conn_onmessage(resp);
 		};
 	}
-}
+};
 
 function select_input_format(selVal) {
 	if(selVal == 'raster') {
@@ -133,7 +145,7 @@ function logoff() {
 		},
 		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_LOGOUT) {
-				ws_conn.close();
+				close_ws(true);
 				if(!$.cookie("cloudcs_sess")) {
 					$('body').html('<p></p>');					
 				}
@@ -142,7 +154,7 @@ function logoff() {
 					document.location.href = "/";
 				}
 			}
-		});
+		}, null);
 };
 
 function check_detached_tasks(fn, if_no_tasks) {
@@ -162,20 +174,20 @@ function check_detached_tasks(fn, if_no_tasks) {
 				}
 				if(!success) {
 					alert_in_page('Error determining detached task status.', 'danger');
-					ws_conn.close();
+					close_ws(true);
 				}
 				else {
 					err = if_no_tasks ? (num_tasks > 0) : (num_tasks == 0);
 					if(err) {
 						msg = if_no_tasks ? 'Your background task is still running. Please wait till it is complete.' : 'You have no running background tasks.';
 						alert_in_page(msg, 'warning');
-						ws_conn.close();
+						close_ws(true);
 					}
 					else {
 						fn();
 					}
 				}
-			});
+			}, null);
 	}
 	else {
 		fn();
@@ -234,9 +246,9 @@ function load_cfg(filename) {
 				else {
 					alert_in_page('Error loading configuration. ' + resp.data.cfg, 'danger');
 				}
-				ws_conn.close();
+				close_ws(true);
 			}
-		});	
+		}, null);	
 };
 
 function populate_config(cfg) {
@@ -412,13 +424,13 @@ function run_job(attach) {
 		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_RUN_JOB) {
 				$('#results_div_msg').val((resp.data.success ? 'Success' : 'Failed') + '.\n' + $('#results_div_msg').val());
-				ws_conn.close();
+				close_ws(true);
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
 				$('#btn_detach_run').attr('disabled', 'disabled');
 			}
 			else if(resp.msg_type == ws_msg_types.RSP_DETACH_TASK) {
-				ws_conn.close();
+				close_ws(true);
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
@@ -428,7 +440,12 @@ function run_job(attach) {
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
 				$('#btn_detach_run').attr('disabled', 'disabled');
+				ignore_close_callback();
 			}
+		},
+		function() {
+			alert_in_page("Disconnected from server. To see results use the 'Monitor Background Task' or 'Show Previous Task Logs' menu options.", "warning");
+			$('#results_div').modal('hide');
 		});	
 };
 
@@ -454,13 +471,13 @@ function run_batch(foldername, attach) {
 		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_RUN_BATCH) {
 				$('#results_div_msg').val((resp.data.success ? 'Success' : 'Failed') + '.\n' + $('#results_div_msg').val());
-				ws_conn.close();
+				close_ws(true);
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
 				$('#btn_detach_run').attr('disabled', 'disabled');
 			}
 			else if(resp.msg_type == ws_msg_types.RSP_DETACH_TASK) {
-				ws_conn.close();
+				close_ws(true);
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
@@ -470,7 +487,12 @@ function run_batch(foldername, attach) {
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
 				$('#btn_detach_run').attr('disabled', 'disabled');
+				ignore_close_callback();
 			}
+		},
+		function() {
+			alert_in_page("Disconnected from server. Use 'Monitor Background Task' or 'Show Previous Task Logs' menu options to examine logs.", "warning");
+			$('#results_div').modal('hide');
 		});		
 };
 
@@ -501,13 +523,13 @@ function run_verify(attach) {
 				else {
 					$('#results_div_msg').val('Tests failed.\n' + $('#results_div_msg').val());
 				}
-				ws_conn.close();
+				close_ws(true);
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
 				$('#btn_detach_run').attr('disabled', 'disabled');
 			}
 			else if(resp.msg_type == ws_msg_types.RSP_DETACH_TASK) {
-				ws_conn.close();
+				close_ws(true);
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
@@ -517,7 +539,12 @@ function run_verify(attach) {
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
 				$('#btn_detach_run').attr('disabled', 'disabled');
+				ignore_close_callback();
 			}
+		},
+		function() {
+			alert_in_page("Disconnected from server. Use 'Monitor Background Task' or 'Show Previous Task Logs' menu options to examine logs.", "warning");
+			$('#results_div').modal('hide');
 		});	
 };
 
@@ -550,7 +577,8 @@ function show_last_run_log() {
 				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
 				$('#results_div_close').removeAttr('disabled');
 			}
-		});	
+		},
+		null);	
 };
 function abort_run() {
 	if(cs_session != '') $('#btn_detach_run').attr('disabled', 'disabled');
@@ -587,7 +615,8 @@ function attach_run() {
 				alert_in_page("Error attaching to background task.", "danger");
 			}
 		}
-	});
+	},
+	null);
 };
 
 function alert_in_page(msg, level) {

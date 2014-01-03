@@ -134,6 +134,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             self.sess = sess = Session.get_session(self.sess_id)
             self.is_authenticated = (sess != None)
             if self.is_authenticated:
+                sess.detach = True  # set detach mode by default
                 self.work_dir = sess.work_dir()
                 self.storage_creds, self.store = sess.storage()
             return ({'success': self.is_authenticated}, not self.is_authenticated)
