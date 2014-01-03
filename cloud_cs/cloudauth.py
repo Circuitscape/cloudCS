@@ -3,7 +3,7 @@ import logging, tornado.web, tornado.auth
 from common import PageHandlerBase
 from session import SessionInMemory as Session
 
-logger = logging.getLogger('cloudCS')
+logger = logging.getLogger('cloudCS.auth')
 
 
 class AuthHandlerBase(PageHandlerBase):

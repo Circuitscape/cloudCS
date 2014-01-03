@@ -2,7 +2,7 @@ import hashlib, time, logging
 from abc import ABCMeta, abstractmethod
 from common import Utils
 
-logger = logging.getLogger('cloudCS')
+logger = logging.getLogger('cloudCS.session')
 
 class Session:
     __metaclass__ = ABCMeta
@@ -16,8 +16,25 @@ class Session:
             raise RuntimeError("user not authorized")
         logger.debug("user " + self.user_id() + " allowed in role(s) " + str(self.user_role()))
         
-        self.local_work_dir = Utils.mkdtemp(prefix="sess_")
-        logger.debug("created temporary folder " + self.local_work_dir)
+        self.local_work_dir = None
+        # reattach older session if available
+        old_sessions = self.remove_older_sessions()
+        self.task = None
+        self.detach = False
+        for sess in old_sessions:
+            if sess.task == None:
+                continue
+            self.task = sess.task
+            self.detach = True
+            self.local_work_dir = sess.local_work_dir
+            self.reattach_older_session(sess)
+            break
+        
+        if None == self.local_work_dir:
+            self.local_work_dir = Utils.mkdtemp(prefix="sess_")
+            logger.debug("created temporary folder " + self.local_work_dir)
+        else:
+            logger.debug("reattached to old temporary folder " + self.local_work_dir)
         req.set_secure_cookie(Session.cookie_name, self.sess_id, 1)
         
         req.redirect('/auth/storage?uid=' + self.user_id())
@@ -31,6 +48,14 @@ class Session:
     def extract_session_id(req):
         return req.get_secure_cookie(Session.cookie_name)
 
+    @abstractmethod
+    def reattach_older_session(self, sess):
+        pass
+
+    @abstractmethod
+    def remove_older_sessions(self):
+        raise NotImplementedError
+    
     @abstractmethod
     def cfg(self):
         raise NotImplementedError
@@ -88,7 +113,59 @@ class Session:
     @abstractmethod
     def check_session_timeouts(self):
         raise NotImplementedError
+    
+    @abstractmethod
+    def check_task_timeouts(self):
+        raise NotImplementedError
 
+class SessionStandalone(Session):
+    def __init__(self, user):
+        self.user = self.uid = user
+        self.creation_time = time.time()
+        self.sess_id = 'standalone'
+        self.nv = {}
+        self.task = None
+        self.detach = False
+        logger.debug("created standalone session for " + self.uid + " with key " + self.sess_id)
+
+    def user_id(self):
+        return self.uid
+    
+    def user_name(self):
+        return self.user
+    
+    def set(self, attrib_name, attrib_val):
+        self.nv[attrib_name] = attrib_val
+    
+    def get(self, attrib_name, default=None):
+        return self.nv.get(attrib_name, default)
+
+    def reattach_older_session(self, sess):
+        raise NotImplementedError
+
+    def remove_older_sessions(self):
+        raise NotImplementedError
+    
+    @staticmethod
+    def cfg():
+        return SessionInMemory.srvr_cfg
+
+    def get_session(self, sess_id):
+        raise NotImplementedError
+
+    def logout(self):
+        raise NotImplementedError
+
+    def logout_all(self):
+        raise NotImplementedError
+
+    @staticmethod
+    def check_session_timeouts():
+        raise NotImplementedError
+
+    @staticmethod
+    def check_task_timeouts():
+        raise NotImplementedError
 
 class SessionInMemory(Session):
     SESS_STORE = {}
@@ -134,9 +211,23 @@ class SessionInMemory(Session):
 
     def logout(self):
         logger.info("logging out " + self.sess_id)
-        self.remove_temporary_files() #TODO: make facility to allow offline processing even after user logs out
+        self.remove_temporary_files()
         if self.sess_id in SessionInMemory.SESS_STORE.keys():
             del SessionInMemory.SESS_STORE[self.sess_id]
+
+    def remove_older_sessions(self):
+        logger.info("getting older sessions of " + self.sess_id + " id:" + self.uid)
+        ret = []
+        for sess_id in SessionInMemory.SESS_STORE.keys():
+            sess = SessionInMemory.SESS_STORE[sess_id]
+            if (sess.uid == self.uid) and (sess.sess_id != self.sess_id):
+                logger.info("found old session " + sess.sess_id + " of user id:" + sess.uid)
+                ret.append(sess)
+                del SessionInMemory.SESS_STORE[sess_id]
+        return ret
+
+    def reattach_older_session(self, sess):
+        self.creation_time = sess.creation_time
 
     @staticmethod
     def logout_all():
@@ -158,7 +249,10 @@ class SessionInMemory(Session):
             if age > timeout_mins:
                 try:
                     num_timeouts += 1
-                    task.wslogger.send_error_msg("Task took too long. Timed out.")
+                    try:
+                        task.wslogger.send_error_msg("Task took too long. Timed out.")
+                    except:
+                        logger.error("error sending message. connection lost with client? session id " + str(sess.sess_id))
                     task.abort()
                 except:
                     logger.error("error timing out task in sess id " + str(sess.sess_id))
@@ -177,7 +271,10 @@ class SessionInMemory(Session):
                 try:
                     num_timeouts += 1
                     if hasattr(sess, 'task') and (None != sess.task):
-                        sess.task.wslogger.send_error_msg("Session exceeded time slot. Timed out.")
+                        try:
+                            sess.task.wslogger.send_error_msg("Session exceeded time slot. Timed out.")
+                        except:
+                            logger.error("error sending message. connection lost with client? session id " + str(sess.sess_id))
                         sess.task.abort()
                     sess.logout()
                 except:

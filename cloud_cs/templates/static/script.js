@@ -11,26 +11,38 @@ var ws_msg_types = {
     'REQ_AUTH': 1000,
     'RSP_AUTH': 1001,
     
-    'REQ_FILE_LIST': 1,
-    'RSP_FILE_LIST': 2,
+    'REQ_FILE_LIST': 101,
+    'RSP_FILE_LIST': 102,
     
-    'REQ_LOGOUT': 3,
-    'RSP_LOGOUT': 4,
+    'REQ_LOGOUT': 103,
+    'RSP_LOGOUT': 104,
     
-    'REQ_RUN_VERIFY': 5,
-    'RSP_RUN_VERIFY': 6,
+    'REQ_RUN_VERIFY': 105,
+    'RSP_RUN_VERIFY': 106,
     
-    'REQ_RUN_JOB': 7,
-    'RSP_RUN_JOB': 8,
+    'REQ_RUN_JOB': 107,
+    'RSP_RUN_JOB': 108,
     
-    'REQ_LOAD_CFG': 9,
-    'RSP_LOAD_CFG': 10,
+    'REQ_LOAD_CFG': 109,
+    'RSP_LOAD_CFG': 110,
     
-    'REQ_ABORT_JOB': 11,
-    'RSP_ABORT_JOB': 12,
+    'REQ_ABORT_JOB': 111,
+    'RSP_ABORT_JOB': 112,
     
-    'REQ_RUN_BATCH': 13,
-    'RSP_RUN_BATCH': 14    
+    'REQ_RUN_BATCH': 113,
+    'RSP_RUN_BATCH': 114,
+        
+    'REQ_DETACH_TASK': 115,
+    'RSP_DETACH_TASK': 116,
+    
+    'REQ_ATTACH_TASK': 117,
+    'RSP_ATTACH_TASK': 118,
+    
+    'REQ_DETACHED_TASKS': 119,
+    'RSP_DETACHED_TASKS': 120,
+    
+    'REQ_LAST_RUN_LOG': 121,
+    'RSP_LAST_RUN_LOG': 122
 };
 
 var ws_conn_authenticated = false;
@@ -131,6 +143,43 @@ function logoff() {
 				}
 			}
 		});
+};
+
+function check_detached_tasks(fn, if_no_tasks) {
+	if(cs_session != '') {
+		do_ws(function() {
+				ws_conn.send(JSON.stringify({
+					'msg_type': ws_msg_types.REQ_DETACHED_TASKS,
+					'data': {}
+				}));
+			},
+			function(resp) {
+				success = false;
+				num_tasks = 0;
+				if (resp.msg_type == ws_msg_types.RSP_DETACHED_TASKS) {
+					success = resp.data.success;
+					if(success) num_tasks = resp.data.num_tasks;
+				}
+				if(!success) {
+					alert_in_page('Error determining detached task status.', 'danger');
+					ws_conn.close();
+				}
+				else {
+					err = if_no_tasks ? (num_tasks > 0) : (num_tasks == 0);
+					if(err) {
+						msg = if_no_tasks ? 'Your background task is still running. Please wait till it is complete.' : 'You have no running background tasks.';
+						alert_in_page(msg, 'warning');
+						ws_conn.close();
+					}
+					else {
+						fn();
+					}
+				}
+			});
+	}
+	else {
+		fn();
+	}
 };
 
 function get_form_field(fld_name, fld_type) {
@@ -257,87 +306,90 @@ function populate_config(cfg) {
 	set_form_field('output_file', cfg.output_file);
 }
 
-function run_job() {
+function run_job(attach) {
 	cfg = {};
-	cfg.data_type = get_form_field('input_type', 'radio');
-	cfg.scenario = get_form_field('radio_modeling_mode', 'radio');
 	
-	if(cfg.data_type == 'raster') {
-		cfg.connect_four_neighbors_only = (get_form_field('cell_conn_type') == 4);
-		cfg.connect_using_avg_resistances = (get_form_field('cell_calc_type') == 'R');
+	if(!attach) {
+		cfg.data_type = get_form_field('input_type', 'radio');
+		cfg.scenario = get_form_field('radio_modeling_mode', 'radio');
 		
-		filename = get_form_field('short_circuit_file');
-		if(filename.length > 0) {
-			cfg.use_polygons = true;
-			cfg.polygon_file = filename;
-		}
-
-		filename = 	get_form_field('habitat_mask_file');
-		if(filename.length > 0) {
-			cfg.mask_file = filename; 
-			cfg.use_mask = true;
-		}
-	}
-
-	filename = 	get_form_field('habitat_file');
-    if(filename.length > 0) {
-    	cfg.habitat_file = filename;
-    	cfg.habitat_map_is_resistances = (get_form_field('habitat_data_type') == 'R');
-    }
+		if(cfg.data_type == 'raster') {
+			cfg.connect_four_neighbors_only = (get_form_field('cell_conn_type') == 4);
+			cfg.connect_using_avg_resistances = (get_form_field('cell_calc_type') == 'R');
+			
+			filename = get_form_field('short_circuit_file');
+			if(filename.length > 0) {
+				cfg.use_polygons = true;
+				cfg.polygon_file = filename;
+			}
 	
-	if(cfg.scenario == 'advanced') {
-		filename = 	get_form_field('current_sources_file');
-		if(filename.length > 0) cfg.source_file = filename;
-
-		filename = 	get_form_field('ground_points_file');
-		if(filename.length > 0) cfg.ground_file = filename;
+			filename = 	get_form_field('habitat_mask_file');
+			if(filename.length > 0) {
+				cfg.mask_file = filename; 
+				cfg.use_mask = true;
+			}
+		}
+	
+		filename = 	get_form_field('habitat_file');
+	    if(filename.length > 0) {
+	    	cfg.habitat_file = filename;
+	    	cfg.habitat_map_is_resistances = (get_form_field('habitat_data_type') == 'R');
+	    }
 		
-		cfg.ground_file_is_resistances = (get_form_field('ground_value_type') == 'R');
-		cfg.use_unit_currents = get_form_field('use_unit_currents', 'checkbox');
-		cfg.use_direct_grounds = get_form_field('chk_use_direct_grounds', 'checkbox');
-		cfg.remove_src_or_gnd = get_form_field('rmv_on_conflict');
-	}
+		if(cfg.scenario == 'advanced') {
+			filename = 	get_form_field('current_sources_file');
+			if(filename.length > 0) cfg.source_file = filename;
 	
-	if((cfg.scenario == 'one-to-all') || (cfg.scenario == 'all-to-one')) {
-		filename = 	get_form_field('src_strength_file');
-		if(filename.length > 0) {
-        	cfg.use_variable_source_strengths = true; 
-            cfg.variable_source_file = filename;
-		}
-	}
-
-	if((cfg.scenario != 'advanced')) {
-		filename = 	get_form_field('focal_nodes_file');
-		if(filename.length > 0) {
-			cfg.point_file = filename;
+			filename = 	get_form_field('ground_points_file');
+			if(filename.length > 0) cfg.ground_file = filename;
+			
+			cfg.ground_file_is_resistances = (get_form_field('ground_value_type') == 'R');
+			cfg.use_unit_currents = get_form_field('use_unit_currents', 'checkbox');
+			cfg.use_direct_grounds = get_form_field('chk_use_direct_grounds', 'checkbox');
+			cfg.remove_src_or_gnd = get_form_field('rmv_on_conflict');
 		}
 		
-		filename = get_form_field('incl_excl_file');
-		if(filename.length > 0) {
-			cfg.use_included_pairs = true;
-			cfg.included_pairs_file = filename;
+		if((cfg.scenario == 'one-to-all') || (cfg.scenario == 'all-to-one')) {
+			filename = 	get_form_field('src_strength_file');
+			if(filename.length > 0) {
+	        	cfg.use_variable_source_strengths = true; 
+	            cfg.variable_source_file = filename;
+			}
 		}
-		cfg.write_cum_cur_map_only = get_form_field('write_cum_cur_map_only', 'checkbox');
-		cfg.write_max_cur_maps = get_form_field('write_max_cur_maps', 'checkbox');
-	}
 	
-	if(cfg.scenario == 'pairwise') {
-		num_parallel_procs = get_form_field('num_parallel_procs');
-		if(num_parallel_procs != 1) {
-			cfg.parallelize = true;
-			cfg.max_parallel = parseInt(num_parallel_procs);
+		if((cfg.scenario != 'advanced')) {
+			filename = 	get_form_field('focal_nodes_file');
+			if(filename.length > 0) {
+				cfg.point_file = filename;
+			}
+			
+			filename = get_form_field('incl_excl_file');
+			if(filename.length > 0) {
+				cfg.use_included_pairs = true;
+				cfg.included_pairs_file = filename;
+			}
+			cfg.write_cum_cur_map_only = get_form_field('write_cum_cur_map_only', 'checkbox');
+			cfg.write_max_cur_maps = get_form_field('write_max_cur_maps', 'checkbox');
 		}
-		cfg.low_memory_mode = get_form_field('low_memory_mode', 'checkbox');
+		
+		if(cfg.scenario == 'pairwise') {
+			num_parallel_procs = get_form_field('num_parallel_procs');
+			if(num_parallel_procs != 1) {
+				cfg.parallelize = true;
+				cfg.max_parallel = parseInt(num_parallel_procs);
+			}
+			cfg.low_memory_mode = get_form_field('low_memory_mode', 'checkbox');
+		}
+		cfg.preemptive_memory_release = get_form_field('preemptive_memory_release', 'checkbox');
+		cfg.print_timings = get_form_field('print_timings', 'checkbox');
+		cfg.print_rusages = get_form_field('print_rusages', 'checkbox');
+		cfg.log_level = get_form_field('log_level');
+		cfg.log_transform_maps = get_form_field('log_transform_maps', 'checkbox');
+		cfg.compress_grids = get_form_field('compress_grids', 'checkbox');
+		cfg.write_volt_maps = get_form_field('write_volt_maps', 'checkbox');
+		cfg.write_cur_maps = get_form_field('write_cur_maps', 'checkbox');
+		cfg.output_file = get_form_field('output_file');		
 	}
-	cfg.preemptive_memory_release = get_form_field('preemptive_memory_release', 'checkbox');
-	cfg.print_timings = get_form_field('print_timings', 'checkbox');
-	cfg.print_rusages = get_form_field('print_rusages', 'checkbox');
-	cfg.log_level = get_form_field('log_level');
-	cfg.log_transform_maps = get_form_field('log_transform_maps', 'checkbox');
-	cfg.compress_grids = get_form_field('compress_grids', 'checkbox');
-	cfg.write_volt_maps = get_form_field('write_volt_maps', 'checkbox');
-	cfg.write_cur_maps = get_form_field('write_cur_maps', 'checkbox');
-	cfg.output_file = get_form_field('output_file');
 	
 	do_ws(function() {
 			$('#results_div').modal({ backdrop: 'static', keyboard: false });
@@ -346,10 +398,16 @@ function run_job() {
 			$('#results_div').modal('show');
 			$('#results_div_close').attr('disabled', 'disabled');
 			$('#btn_abort_run').removeAttr('disabled');
-			ws_conn.send(JSON.stringify({
-				'msg_type': ws_msg_types.REQ_RUN_JOB,
-				'data': cfg
-			}));
+			$('#btn_detach_run').removeAttr('disabled');
+			if(!attach) {
+				ws_conn.send(JSON.stringify({
+					'msg_type': ws_msg_types.REQ_RUN_JOB,
+					'data': {
+						'run_data': cfg,
+						'client_ctx': 'job'
+					}
+				}));				
+			}
 		},
 		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_RUN_JOB) {
@@ -357,6 +415,10 @@ function run_job() {
 				ws_conn.close();
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
+				$('#btn_detach_run').attr('disabled', 'disabled');
+			}
+			else if(resp.msg_type == ws_msg_types.RSP_DETACH_TASK) {
+				ws_conn.close();
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
@@ -365,11 +427,12 @@ function run_job() {
 				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
+				$('#btn_detach_run').attr('disabled', 'disabled');
 			}
 		});	
 };
 
-function run_batch(foldername) {
+function run_batch(foldername, attach) {
 	do_ws(function() {
 			$('#results_div').modal({ backdrop: 'static', keyboard: false });
 			$('#results_div_title').html('Running Batch...');
@@ -377,10 +440,16 @@ function run_batch(foldername) {
 			$('#results_div').modal('show');
 			$('#results_div_close').attr('disabled', 'disabled');
 			$('#btn_abort_run').removeAttr('disabled');
-			ws_conn.send(JSON.stringify({
-				'msg_type': ws_msg_types.REQ_RUN_BATCH,
-				'data': foldername
-			}));
+			$('#btn_detach_run').removeAttr('disabled');
+			if(!attach) {
+				ws_conn.send(JSON.stringify({
+					'msg_type': ws_msg_types.REQ_RUN_BATCH,
+					'data': {
+						'run_data': foldername,
+						'client_ctx': 'batch'
+					}
+				}));				
+			}
 		},
 		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_RUN_BATCH) {
@@ -388,6 +457,10 @@ function run_batch(foldername) {
 				ws_conn.close();
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
+				$('#btn_detach_run').attr('disabled', 'disabled');
+			}
+			else if(resp.msg_type == ws_msg_types.RSP_DETACH_TASK) {
+				ws_conn.close();
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
@@ -396,11 +469,12 @@ function run_batch(foldername) {
 				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
+				$('#btn_detach_run').attr('disabled', 'disabled');
 			}
 		});		
 };
 
-function run_verify() {
+function run_verify(attach) {
 	do_ws(function() {
 			$('#results_div').modal({ backdrop: 'static', keyboard: false });
 			$('#results_div_title').html('Running Verifications...');
@@ -408,10 +482,16 @@ function run_verify() {
 			$('#results_div').modal('show');
 			$('#results_div_close').attr('disabled', 'disabled');
 			$('#btn_abort_run').removeAttr('disabled');
-			ws_conn.send(JSON.stringify({
-				'msg_type': ws_msg_types.REQ_RUN_VERIFY,
-				'data': ""
-			}));
+			$('#btn_detach_run').removeAttr('disabled');
+			if(!attach) {
+				ws_conn.send(JSON.stringify({
+					'msg_type': ws_msg_types.REQ_RUN_VERIFY,
+					'data': {
+						'run_data': "",
+						'client_ctx': 'verify'
+					}
+				}));				
+			}
 		},
 		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_RUN_VERIFY) {
@@ -424,6 +504,10 @@ function run_verify() {
 				ws_conn.close();
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
+				$('#btn_detach_run').attr('disabled', 'disabled');
+			}
+			else if(resp.msg_type == ws_msg_types.RSP_DETACH_TASK) {
+				ws_conn.close();
 			}
 			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
 				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
@@ -432,12 +516,78 @@ function run_verify() {
 				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
 				$('#results_div_close').removeAttr('disabled');
 				$('#btn_abort_run').attr('disabled', 'disabled');
+				$('#btn_detach_run').attr('disabled', 'disabled');
 			}
 		});	
 };
 
+function show_last_run_log() {
+	do_ws(function() {
+			$('#results_div').modal({ backdrop: 'static', keyboard: false });
+			$('#results_div_title').html('Logs from your last run');
+			$('#results_div_msg').val('');
+			$('#results_div').modal('show');
+			$('#results_div_close').attr('disabled', 'disabled');
+			$('#btn_abort_run').attr('disabled', 'disabled');
+			$('#btn_detach_run').attr('disabled', 'disabled');
+			ws_conn.send(JSON.stringify({
+				'msg_type': ws_msg_types.REQ_LAST_RUN_LOG,
+				'data': {}
+			}));				
+		},
+		function(resp) {
+			if (resp.msg_type == ws_msg_types.RSP_LAST_RUN_LOG) {
+				if(!resp.data.success) {
+					$('#results_div_msg').val(resp.data.msg + '\n' + $('#results_div_msg').val());
+				}
+				ws_conn.close();
+				$('#results_div_close').removeAttr('disabled');
+			}
+			else if(resp.msg_type == ws_msg_types.SHOW_LOG) {
+				$('#results_div_msg').val(resp.data + '\n' + $('#results_div_msg').val());
+			}
+			else if(resp.msg_type == ws_msg_types.RSP_ERROR) {
+				$('#results_div_msg').val('Error: ' + resp.data + '\n' + $('#results_div_msg').val());
+				$('#results_div_close').removeAttr('disabled');
+			}
+		});	
+};
 function abort_run() {
+	if(cs_session != '') $('#btn_detach_run').attr('disabled', 'disabled');
 	send_ws(ws_msg_types.REQ_ABORT_JOB, "");
+};
+
+function detach_run() {
+	if(cs_session != '') $('#btn_abort_run').attr('disabled', 'disabled');
+	send_ws(ws_msg_types.REQ_DETACH_TASK, "");
+};
+
+function attach_run() {
+	do_ws(function() {
+		ws_conn.send(JSON.stringify({
+			'msg_type': ws_msg_types.REQ_ATTACH_TASK,
+			'data': {}
+		}));
+	},
+	function(resp) {
+		if(resp.msg_type == ws_msg_types.RSP_ATTACH_TASK) {
+			if(resp.data.success) {
+				client_ctx = resp.data.client_ctx;
+				if(client_ctx == 'verify') {
+					run_verify(true);
+				}
+				else if(client_ctx == 'batch') {
+					run_batch('', true);
+				}
+				else if(client_ctx == 'job') {
+					run_job(true);
+				}
+			}
+			else {
+				alert_in_page("Error attaching to background task.", "danger");
+			}
+		}
+	});
 };
 
 function alert_in_page(msg, level) {
@@ -490,8 +640,25 @@ function init_circuitscape(ws_url, sess_id) {
 		load_cfg($('#menu_load_file').val());
 	});
 	$('#menu_batch_folder').change(function(){
-		run_batch($('#menu_batch_folder').val());
+		$('#in_page_alert').hide();
+		batch_file_name = $('#menu_batch_folder').val();
+		check_detached_tasks(function() {
+			run_batch(batch_file_name, false);			
+		}, true);
 	});
+	$('#menu_reattach').click(function() {
+		$('#in_page_alert').hide();
+		check_detached_tasks(function() {
+			attach_run();			
+		}, false);
+	});
+	$('#menu_show_last_logs').click(function() {
+		$('#in_page_alert').hide();
+		check_detached_tasks(function() {
+			show_last_run_log();			
+		}, true);
+	});
+	
 	$('#input_tabs').tab();
 	$('#input_tabs a').click(function(e) {
 		e.preventDefault();
@@ -526,16 +693,25 @@ function init_circuitscape(ws_url, sess_id) {
 	});
 	
 	$('#menu_verify').click(function(e){
-		run_verify();
+		$('#in_page_alert').hide();
+		check_detached_tasks(function(){
+			run_verify(false);
+		}, true);
 	});
 	
 	$('#btn_run').click(function(e){
 		$('#in_page_alert').hide();
-		run_job();
+		check_detached_tasks(function(){
+			run_job(false);
+		}, true);
 	});
 	
 	$('#btn_abort_run').click(function(e){
 		abort_run();
+	});
+	
+	$('#btn_detach_run').click(function(e){
+		detach_run();
 	});
 	
 	$('#use_max_parallel').click(function(e){

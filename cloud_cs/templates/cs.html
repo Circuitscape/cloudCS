@@ -54,6 +54,15 @@
 										<a href="#" id="menu_batch_folder_select" class="server_file_dlg">Run Batch</a>
 										<input id="menu_batch_folder" type="text" style="display: none;">
 									</li>
+									{% if filedlg_type == "google" %}
+									<li class="divider"></li>
+									<li>
+										<a href="#" id="menu_reattach">Monitor Background Task</a>
+									</li>
+									<li>
+										<a href="#" id="menu_show_last_logs">Show Previous Task Logs</a>
+									</li>
+									{% end %}
 									<!--li>
 										<a href="#" id="menu_save_to_file">Save to file</a>
 									</li-->
@@ -389,6 +398,9 @@
 						<textarea id="results_div_msg" class="form-control" rows="10"></textarea>
 					</div>
 					<div class="modal-footer">
+						{% if filedlg_type == "google" %}						
+						<a id="btn_detach_run" href="#" class="btn btn-primary" data-dismiss="modal">Run in Background</a>
+						{% end %}
 						<a id="btn_abort_run" href="#" class="btn btn-primary">Abort</a>
 						<a id="results_div_close" href="#" class="btn btn-primary" data-dismiss="modal">Close</a>
 					</div>

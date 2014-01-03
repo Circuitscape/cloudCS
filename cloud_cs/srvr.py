@@ -1,21 +1,18 @@
-import os, webbrowser, getpass, StringIO, logging, time
+import os, webbrowser, getpass, logging
 import tornado.web, tornado.ioloop, tornado.websocket, tornado.httpserver
 
 from apiclient.http import HttpError
 
-from circuitscape.compute import Compute
 from circuitscape.cfg import CSConfig
-from circuitscape.io import CSIO
 from circuitscape import __version__ as cs_version
 from circuitscape import __author__ as cs_author
-from circuitscape import __file__ as cs_pkg_file
 
 from cfg import ServerConfig
 from common import PageHandlerBase, ErrorHandler, Utils, AsyncRunner, BaseMsg, WebSocketLogger
-from session import SessionInMemory as Session
+from session import SessionInMemory as Session, SessionStandalone
 from cloudauth import GoogleHandler as AuthHandler
 from cloudstore import GoogleDriveHandler as StorageHandler
-from cloudstore import GoogleDriveStore
+from runner import CircuitscapeRunner
 
 SRVR_CFG = None
 
@@ -23,314 +20,67 @@ class WSMsg(BaseMsg):
     REQ_AUTH = 1000
     RSP_AUTH = 1001
     
-    REQ_FILE_LIST = 1
-    RSP_FILE_LIST = 2
+    REQ_FILE_LIST = 101
+    RSP_FILE_LIST = 102
     
-    REQ_LOGOUT = 3
-    RSP_LOGOUT = 4
+    REQ_LOGOUT = 103
+    RSP_LOGOUT = 104
     
-    REQ_RUN_VERIFY = 5
-    RSP_RUN_VERIFY = 6
+    REQ_RUN_VERIFY = 105
+    RSP_RUN_VERIFY = 106
     
-    REQ_RUN_JOB = 7
-    RSP_RUN_JOB = 8
+    REQ_RUN_JOB = 107
+    RSP_RUN_JOB = 108
     
-    REQ_LOAD_CFG = 9
-    RSP_LOAD_CFG = 10
+    REQ_LOAD_CFG = 109
+    RSP_LOAD_CFG = 110
     
-    REQ_ABORT_JOB = 11
-    RSP_ABORT_JOB = 12
+    REQ_ABORT_JOB = 111
+    RSP_ABORT_JOB = 112
 
-    REQ_RUN_BATCH = 13
-    RSP_RUN_BATCH = 14
+    REQ_RUN_BATCH = 113
+    RSP_RUN_BATCH = 114
 
-class CircuitscapeRunner(AsyncRunner):
-    def __init__(self, wslogger, wsmsg, method, *args):
-        super(CircuitscapeRunner, self).__init__(wslogger, wsmsg, method, *args)
+    REQ_DETACH_TASK = 115
+    RSP_DETACH_TASK = 116
     
-    def completed(self):
-        if (None != self.wslogger) and (None != self.wslogger.dest):
-            websock = self.wslogger.dest
-            websock.task = websock.sess.task = None
+    REQ_ATTACH_TASK = 117
+    RSP_ATTACH_TASK = 118
     
-    @staticmethod
-    def check_role_limits(roles, cfg, qlogger):
-        if ("admin" in roles) or ("standalone" in roles):
-            return (True, None)
-        
-        try:
-            # check max parallel
-            qlogger.send_log_msg("Parallelization requested: " + str(cfg.parallelize))
-            if cfg.parallelize:
-                qlogger.send_log_msg("Parallel processes requested: " + (str(cfg.max_parallel) if (cfg.max_parallel > 0) else "maximum"))
-                if cfg.max_parallel == 0:
-                    cfg.max_parallel = 20
-                else:
-                    return (False, "Your profile is restricted to a maximum of 20 parallel processors.")
-            
-            # check for cumulative maps
-            qlogger.send_log_msg("Output maps required for - voltage: " + str(cfg.write_volt_maps) + ", current: " + str(cfg.write_cur_maps) + ", cumulative only: " + str(cfg.write_cum_cur_map_only))
-            if cfg.write_volt_maps or (cfg.write_cur_maps and (not cfg.write_cum_cur_map_only)):
-                return (False, "Your profile is restricted to create only cumulative current maps.")
-            
-            # check problem size
-            prob_sz = CSIO.problem_size(cfg.data_type, cfg.habitat_file)
-            qlogger.send_log_msg("Habitat size: " + str(prob_sz))
-            if prob_sz > 24000000:
-                return (False, "Your profile is restricted for habitat sizes of 24m nodes only.")
-        except Exception as e:
-            return (False, "Unknown error verifying limits. (" + str(e) + "). Please check your input files.")
-        
-        return (True, None)
+    REQ_DETACHED_TASKS = 119
+    RSP_DETACHED_TASKS = 120
     
-    @staticmethod
-    def run_job(qlogger, msg_type, roles, msg_data, work_dir, storage_creds, store_in_cloud):
-        solver_failed = True
-        output_cloud_folder = None
-        output_folder = None
-        cfg = CSConfig()
-        store = GoogleDriveStore(storage_creds) if (None != storage_creds) else None
-        
-        for key in msg_data.keys():
-            val = msg_data[key]
-            if store_in_cloud and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
-                # if val is gdrive location, translate it to local drive
-                if val.startswith("gdrive://"):
-                    if key == 'output_file':
-                        # store the output gdrive folder
-                        qlogger.send_log_msg("Preparing cloud store output folder: " + val)
-                        output_cloud_folder = val
-                        output_folder = os.path.join(work_dir, 'output')
-                        if not os.path.exists(output_folder):
-                            os.mkdir(output_folder)
-                        else:
-                            Utils.rmdir(output_folder, True)
-                        val = os.path.join(output_folder, 'results.out')
-                    else:
-                        # copy the file locally
-                        qlogger.send_log_msg("Reading from cloud store: " + val)
-                        val = store.copy_to_local(val, work_dir)
-            cfg.__setattr__(key, val)
-        
-        qlogger.send_log_msg("Verifying configuration...")
-        (all_options_valid, message) = cfg.check()
-        
-        if all_options_valid:
-            qlogger.send_log_msg("Verifying profile limits...")
-            (all_options_valid, message) = CircuitscapeRunner.check_role_limits(roles, cfg, qlogger)
-            
-        if not all_options_valid:
-            qlogger.send_error_msg(message)
-        else:
-            # In cloud mode, this would be a temporary directory
-            outdir, _out_file = os.path.split(cfg.output_file)
-            
-            try:
-                qlogger.send_log_msg("Storing final configuration...")
-                configFile = os.path.join(outdir, 'circuitscape.ini')
-                cfg.write(configFile)
-    
-                cs = Compute(configFile, qlogger)
-                result, solver_failed = cs.compute()
-                qlogger.send_log_msg("Result: \n" + str(result))
-            except Exception as e:
-                message = str(e)
-                qlogger.send_error_msg(message)
-
-        success = not solver_failed
-        
-        if success and store_in_cloud:
-            qlogger.send_log_msg("Compressing results for upload...")
-            output_folder_zip = os.path.join(work_dir, 'output.zip')
-            Utils.compress_folder(output_folder, output_folder_zip)
-            
-            for attempt in range(1,4):
-                qlogger.send_log_msg("Uploading results to cloud store...")
-                if None == store.copy_to_remote(output_cloud_folder, output_folder_zip, mime_type='application/zip'):
-                    qlogger.send_log_msg("Error uploading output.zip. attempt " + str(attempt) + " of 3")
-                    time.sleep(5)
-                else:
-                    break
-            
-#             for root, _dirs, files in os.walk(output_folder, topdown=False):
-#                 for name in files:
-#                     outfile = os.path.join(root, name)
-#                     qlogger.send_log_msg("uploading " + name + "...")
-#                     if None == store.copy_to_remote(output_cloud_folder, outfile):
-#                         qlogger.send_log_msg("error uploading " + name)
-            qlogger.send_log_msg("Uploaded results to cloud store")
-            Utils.rmdir(output_folder, True)
-            os.remove(output_folder_zip)
-        
-        qlogger.send_result_msg(msg_type, {'complete': True, 'success': success})
-                    
-    
-    @staticmethod
-    def run_verify(qlogger, msg_type, roles):
-        outdir = None
-        cwd = os.getcwd()
-        strio = StringIO.StringIO()
-        try:
-            root_path = os.path.dirname(cs_pkg_file)
-            outdir = Utils.mkdtemp(prefix="verify_")
-            if os.path.exists(root_path):
-                root_path = os.path.split(root_path)[0]
-                os.chdir(root_path)     # otherwise we are running inside a packaged folder and resources are availale at cwd
-            from circuitscape.verify import cs_verifyall
-            testResult = cs_verifyall(out_path=outdir, ext_logger=qlogger, stream=strio)
-            testsPassed = testResult.wasSuccessful()
-        except Exception as e:
-            qlogger.send_log_msg("Error during verify: " + str(e))
-            testsPassed = False
-        finally:
-            os.chdir(cwd)
-            Utils.rmdir(outdir)
-
-        qlogger.send_log_msg(strio.getvalue())
-        strio.close()
-        qlogger.send_result_msg(msg_type, {'complete': True, 'success': testsPassed})
-
-
-    @staticmethod
-    def run_batch(qlogger, msg_type, roles, msg_data, work_dir, storage_creds, store_in_cloud):
-        cwd = os.getcwd()
-        store = GoogleDriveStore(storage_creds) if (None != storage_creds) else None
-        
-        if store_in_cloud:
-            batch_zip = msg_data
-            batch_zip_name = os.path.splitext(store.to_file_name(batch_zip))[0]  + '_output.zip'
-            qlogger.send_log_msg("Reading from cloud store: " + batch_zip)
-            batch_folder = Utils.mkdtemp(prefix="batch_")
-            batch_zip = store.copy_to_local(batch_zip, work_dir)
-            Utils.uncompress_folder(batch_folder, batch_zip)
-            os.remove(batch_zip)
-            
-            output_folder_zip = os.path.join(work_dir, batch_zip_name)
-        else:
-            batch_folder = msg_data
-            qlogger.send_log_msg("Running batch with all configurations (.ini files) under folder: " + batch_folder)
-            
-        
-        output_root_folder = Utils.mkdtemp_if_exists(prefix="output", dir=batch_folder)
-
-        if store_in_cloud:
-            qlogger.send_log_msg("Outputs would be uploaded to your cloud store as " + batch_zip_name)
-        else:
-            qlogger.send_log_msg("Outputs would be stored under folder: " + output_root_folder)
-        
-        num_success = 0
-        num_failed = 0
-        
-        # collect all configuration names
-        config_files = []
-        for root, _dirs, files in os.walk(batch_folder):
-            for file_name in files:
-                if not file_name.endswith(".ini"):
-                    continue
-                config_files.append(os.path.join(root, file_name))
-        
-        qlogger.send_log_msg("Found " + str(len(config_files)) + " configuration files.")
-        
-        batch_success = False
-        try:
-            for config_file in config_files:
-                root, file_name = os.path.split(config_file)
-                qlogger.send_log_msg("Loading configuration: " + config_file)
-         
-                cfg = CSConfig(config_file)
-         
-                os.chdir(root)       
-                qlogger.send_log_msg("Verifying configuration...")
-                (all_options_valid, message) = cfg.check()
-                #qlogger.send_log_msg("Verified configuration with result: " + str(all_options_valid))
-                
-                if all_options_valid:
-                    #qlogger.send_log_msg("Verifying all paths are relative...")
-                    all_options_valid = cfg.are_all_paths_relative();
-                    if not all_options_valid:
-                        message = "All file paths in configuration must be relative to location of configuration file."
-                
-                #qlogger.send_log_msg("Verified configuration with result: " + str(all_options_valid))
-                if all_options_valid:
-                    qlogger.send_log_msg("Verifying profile limits...")
-                    (all_options_valid, message) = CircuitscapeRunner.check_role_limits(roles, cfg, qlogger)
-                    
-                if not all_options_valid:
-                    qlogger.send_error_msg(message)
-                    num_failed += 1
-                else:
-                    solver_failed = True
-                    output_folder = os.path.join(output_root_folder, os.path.splitext(file_name)[0])
-                    os.mkdir(output_folder)
-                    cfg.output_file = os.path.join(output_folder, os.path.basename(cfg.output_file))
-                    
-                    outdir, _out_file = os.path.split(cfg.output_file)
-                    
-                    try:
-                        qlogger.send_log_msg("Storing final configuration...")
-                        configFile = os.path.join(outdir, 'circuitscape.ini')
-                        cfg.write(configFile)
-            
-                        cs = Compute(configFile, qlogger)
-                        result, solver_failed = cs.compute()
-                        qlogger.send_log_msg("Result: \n" + str(result))
-                    except Exception as e:
-                        message = str(e)
-                        qlogger.send_error_msg(message)
-                    
-                    if solver_failed:
-                        num_failed += 1
-                    else:
-                        num_success += 1
-
-            qlogger.send_log_msg("Batch run done for " + str(len(config_files)) + " configuration files. Success: " + str(num_success) + ". Failures: " + str(num_failed))
-            
-            if num_success > 0:
-                if store_in_cloud:
-                    qlogger.send_log_msg("Compressing results for upload...")
-                    Utils.compress_folder(output_root_folder, output_folder_zip)
-
-                    for attempt in range(1,4):
-                        qlogger.send_log_msg("Uploading results to cloud store...")
-                        if None == store.copy_to_remote(msg_data, output_folder_zip, mime_type='application/zip', extract_folder_id=True):
-                            qlogger.send_log_msg("Error uploading output.zip. attempt " + str(attempt) + " of 3")
-                            time.sleep(5)
-                        else:
-                            qlogger.send_log_msg("Uploaded results to cloud store as " + batch_zip_name)
-                            break
-                else:
-                    qlogger.send_log_msg("Outputs under folder: " + output_root_folder)
-                batch_success = True
-        except Exception as e:
-            qlogger.send_log_msg("Error during batch run: " + str(e))
-        finally:
-            os.chdir(cwd)
-            if store_in_cloud:
-                try:
-                    Utils.rmdir(batch_folder)
-                    if os.path.exists(output_folder_zip):
-                        os.remove(output_folder_zip)
-                except:
-                    qlogger.send_log_msg("Could not clear temporary files.")
-            
-        qlogger.send_result_msg(msg_type, {'complete': True, 'success': batch_success})
+    REQ_LAST_RUN_LOG = 121
+    RSP_LAST_RUN_LOG = 122
 
 
 class WebSocketHandler(tornado.websocket.WebSocketHandler):    
     def open(self):
         global logger
         self.is_authenticated = False
+        if not SRVR_CFG.multiuser:
+            self.sess = SessionStandalone(getpass.getuser())
         logger.debug("websocket connection opened")
-            
+
     def on_close(self):
         global logger
         self.is_authenticated = False
         logger.debug("websocket connection closed")
+        
+        sess = self.sess
+        if (sess != None) and (sess.task != None) and sess.detach:
+            logger.debug("detaching task")
+            self.sess.task.detach()
 
-#     def dump(self, obj):
-#         for attr in dir(obj):
-#             print "obj.%s = %s" % (attr, getattr(obj, attr))
-    
+    def logout_or_detach(self):
+        sess = self.sess
+        if SRVR_CFG.multiuser and (sess != None):
+            logger.debug("in logout_or_detach detach=" + str(sess.detach) + " task:" + str(sess.task == None))
+            if (not sess.detach) or (sess.task == None):
+                sess.logout()
+                self.sess = None
+        
+
     def on_message(self, message):
         global SRVR_CFG
         #logger.debug("got request url " + self.request.full_url())
@@ -341,7 +91,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         try:
             if SRVR_CFG.multiuser and not self.is_authenticated:
                 response, is_shutdown_msg = self.handle_auth(wsmsg)
-            else:            
+            else:
                 if (wsmsg.msg_type() == WSMsg.REQ_FILE_LIST) and not SRVR_CFG.multiuser:
                     response, is_shutdown_msg = self.handle_file_list(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_LOGOUT):
@@ -356,6 +106,14 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                     response, is_shutdown_msg = self.handle_abort_job(wsmsg)
                 elif (wsmsg.msg_type() == WSMsg.REQ_LOAD_CFG):
                     response, is_shutdown_msg = self.handle_load_config(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_DETACH_TASK):
+                    response, is_shutdown_msg = self.handle_detach_task(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_ATTACH_TASK):
+                    response, is_shutdown_msg = self.handle_attach_task(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_DETACHED_TASKS):
+                    response, is_shutdown_msg = self.handle_detached_tasks(wsmsg)
+                elif (wsmsg.msg_type() == WSMsg.REQ_LAST_RUN_LOG):
+                    response, is_shutdown_msg = self.handle_last_run_log(wsmsg)
 
             if response != None:
                 logger.debug("responding with message: " + str(response))
@@ -366,9 +124,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             
         if is_shutdown_msg:
             if SRVR_CFG.multiuser:
-                if self.sess != None:
-                    self.sess.logout()
-                    self.sess = None
+                self.logout_or_detach()
             else:
                 stop_webserver()
 
@@ -410,14 +166,66 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         logger.debug("returning config [" + str(result) + "]")
         return ({'cfg': result, 'success': success}, False)
 
+
+    def handle_attach_task(self, wsmsg):
+        self.sess.detach = True
+        task = self.sess.task
+        if None != task:
+            wsmsg.reply({'success': True, 'client_ctx': task.client_ctx})
+            task.attach(self)
+            return (None, False)
+        return ({'success': False}, False)
+
+
+    def handle_detached_tasks(self, wsmsg):
+        num_tasks = 1 if (self.sess.task != None) else 0
+        return ({'success': True, 'num_tasks': num_tasks}, False)
+    
+
+    def handle_detach_task(self, wsmsg):
+        self.sess.detach = True
+        return ({'success': True}, False)
+
+    def handle_last_run_log(self, wsmsg):
+        run_log = Utils.open_last_run_log("", self.sess.user_id())
+        if None == run_log:
+            return ({'success': False, 'msg': "No run logs found."}, False)
+        
+        resp_nv = {
+                   'msg_type': BaseMsg.SHOW_LOG,
+                   'data': ''
+        }
+        success = False
+        try:
+            for line in run_log.readlines():
+                resp_nv['data'] = line.rstrip()
+                self.write_message(resp_nv, False)
+            success = True
+        finally:
+            run_log.close()
+        return ({'success': success}, False)
+
     def handle_abort_job(self, wsmsg):
-        if self.task != None:
-            self.task.abort()
+        if self.sess.task != None:
+            self.sess.task.abort()
         return (None, False)
+
+
+    def _make_wslogger(self):
+        wslogger = WebSocketLogger(self)
+        if SRVR_CFG.multiuser:
+            tee_file = open(os.path.join(self.sess.local_work_dir, "run.log"), "w")
+            wslogger.tee(tee_file)
+        return wslogger
+
 
     def handle_run_job(self, wsmsg):
+        if self.sess.task != None:
+            wsmsg.error("Your background task is still running. Wait for it to complete before starting another.")
+            return (None, False)
+        
         global SRVR_CFG
-        wslogger = WebSocketLogger(self)
+        wslogger = self._make_wslogger()
         multiuser = SRVR_CFG.multiuser
         if multiuser:
             work_dir = self.work_dir
@@ -426,12 +234,21 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         else:
             work_dir = storage_creds = None
             user_role = 'standalone'
-        self.task = self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, user_role, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
+            
+        data = wsmsg.nv['data']
+        run_data = data['run_data']
+        client_ctx = data['client_ctx']
+        self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, client_ctx, user_role, run_data, work_dir, storage_creds, multiuser)
         return (None, False)
 
+
     def handle_run_batch(self, wsmsg):
+        if self.sess.task != None:
+            wsmsg.error("Your background task is still running. Wait for it to complete before starting another.")
+            return (None, False)
+        
         global SRVR_CFG
-        wslogger = WebSocketLogger(self)
+        wslogger = self._make_wslogger()
         multiuser = SRVR_CFG.multiuser
         if multiuser:
             work_dir = self.work_dir
@@ -440,22 +257,31 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         else:
             work_dir = storage_creds = None
             user_role = 'standalone'
-        self.task = self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_batch, user_role, wsmsg.nv['data'], work_dir, storage_creds, multiuser)
+            
+        data = wsmsg.nv['data']
+        run_data = data['run_data']
+        client_ctx = data['client_ctx']
+        self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_batch, client_ctx, user_role, run_data, work_dir, storage_creds, multiuser)
         return (None, False)
 
 
     def handle_run_verify(self, wsmsg):
+        if self.sess.task != None:
+            wsmsg.error("Your background task is still running. Wait for it to complete before starting another.")
+            return (None, False)
+        
         global SRVR_CFG
-        wslogger = WebSocketLogger(self)
+        wslogger = self._make_wslogger()
         user_role = self.sess.user_role() if SRVR_CFG.multiuser else 'standalone'
-        self.task = self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_verify, user_role)
+        
+        data = wsmsg.nv['data']
+        client_ctx = data['client_ctx']
+        self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_verify, client_ctx, user_role)
         return (None, False)
 
 
     def handle_logout(self, wsmsg):
-        if SRVR_CFG.multiuser and (self.sess != None):
-            self.sess.logout()
-            self.sess = None
+        self.logout_or_detach()
         return ({}, True)
 
     def handle_file_list(self, wsmsg):
@@ -490,6 +316,7 @@ class IndexPageHandler(PageHandlerBase):
             username = sess.user_name()
             userid = sess.user_id()
             userrole = sess.user_role()
+            has_running_task = (None != sess.task)
             txt_shutdown = "Logout"
             txt_shutdown_msg = "Are you sure you want to logout from Circuitscape?"
             filedlg_type = "google"
@@ -498,6 +325,7 @@ class IndexPageHandler(PageHandlerBase):
         else:
             userid = username = getpass.getuser()
             userrole = ['standalone']
+            has_running_task = False
             txt_shutdown = "Shutdown"
             txt_shutdown_msg = "Are you sure you want to close Circuitscape?"
             filedlg_type = "srvr"
@@ -509,6 +337,7 @@ class IndexPageHandler(PageHandlerBase):
                   'username': username,
                   'userid': userid,
                   'userrole': userrole,
+                  'has_running_task': has_running_task,
                   'version': cs_version,
                   'author': cs_author,
                   'ws_url': SRVR_CFG.ws_url,
@@ -569,7 +398,7 @@ class Application(tornado.web.Application):
 
     def start_session_and_task_monitor(self):
         # start the session and task timeout monitor
-        self.timer = tornado.ioloop.PeriodicCallback(Application.check_sess_and_task_timeouts, 1000*60)
+        self.timer = tornado.ioloop.PeriodicCallback(Application.check_sess_and_task_timeouts, 1000*60*10)
         self.timer.start()
         
 def stop_webserver(from_signal=False):
@@ -601,7 +430,7 @@ def run_webgui(config):
     
     if log_file:
         handler = logging.FileHandler(log_file)
-        formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(message)s', '%m/%d/%Y %I.%M.%S.%p')
+        formatter = logging.Formatter('%(asctime)s:%(levelname)s:%(name)s:%(message)s', '%m/%d/%Y %I.%M.%S.%p')
         handler.setFormatter(formatter)
         logger.addHandler(handler)
         tornado_access_logger.addHandler(handler)
@@ -611,17 +440,16 @@ def run_webgui(config):
         logging.basicConfig()
 
     logger.info('starting up...')
-    logger.debug("listening on: " + SRVR_CFG.listen_ip + ':' + str(SRVR_CFG.port))
-    logger.debug("hostname: " + SRVR_CFG.host)
-    logger.debug("multiuser: " + str(SRVR_CFG.multiuser))
-    logger.debug("headless: " + str(SRVR_CFG.headless))
+    logger.debug("listening on - " + SRVR_CFG.listen_ip + ':' + str(SRVR_CFG.port))
+    logger.debug("hostname - " + SRVR_CFG.host)
+    logger.debug("multiuser - " + str(SRVR_CFG.multiuser))
+    logger.debug("headless - " + str(SRVR_CFG.headless))
 
     AsyncRunner.DEFAULT_REPLY = {'complete': True, 'success': False}
     if (Utils.temp_files_root != None):
         AsyncRunner.FILTER_STRINGS = [Utils.temp_files_root]
     AsyncRunner.LOG_MSG = WSMsg.SHOW_LOG
 
-    BaseMsg.logger = logger
     app = Application()
     server = tornado.httpserver.HTTPServer(app)
     server.listen(SRVR_CFG.port, address=SRVR_CFG.listen_ip)

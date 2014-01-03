@@ -8,7 +8,7 @@ from oauth2client.client import OAuth2WebServerFlow
 from common import PageHandlerBase, Utils
 from session import SessionInMemory as Session
 
-logger = logging.getLogger('cloudCS')
+logger = logging.getLogger('cloudCS.store')
 
 class CloudStore:
     __metaclass__ = ABCMeta

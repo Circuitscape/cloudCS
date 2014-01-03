@@ -6,6 +6,7 @@ import tornado.web, tornado.ioloop
 
 from circuitscape import __version__ as cs_version
 from circuitscape import __author__ as cs_author
+import shutil
 
 class PageHandlerBase(tornado.web.RequestHandler):
     def generic_get_error_html(self, status_code, **kwargs):
@@ -66,6 +67,22 @@ class Utils:
     def hash(*args):
         return hashlib.sha1('_'.join(args)).hexdigest()
     
+    @staticmethod
+    def stash_last_run_log(sec_salt, uid, run_log):
+        if not os.path.exists(run_log):
+            return
+        uid_hash = Utils.hash(uid, sec_salt)
+        filename = os.path.join(Utils.run_log_path(), uid_hash)
+        shutil.copyfile(run_log, filename)
+    
+    @staticmethod
+    def open_last_run_log(sec_salt, uid):
+        uid_hash = Utils.hash(uid, sec_salt)
+        filename = os.path.join(Utils.run_log_path(), uid_hash)
+        if not os.path.exists(filename):
+            return None
+        return open(filename, "r")
+    
     #TODO: handle revoke conditions
     @staticmethod
     def stash_storage_creds(sec_salt, uid, creds):
@@ -85,6 +102,13 @@ class Utils:
             with open(filename, 'rb') as f:
                 result = pickle.load(f)
         return result
+    
+    @staticmethod
+    def run_log_path():
+        run_log_path = os.path.join(Utils.temp_files_root, 'run_logs')
+        if not os.path.exists(run_log_path):
+            os.mkdir(run_log_path)
+        return run_log_path 
     
     @staticmethod
     def creds_store_path():
@@ -114,10 +138,12 @@ class Utils:
                 Utils.recursive_zip(zipf, os.path.join(directory, item), folder + os.sep + item)
 
 class BaseMsg:
-    RSP_ERROR = -1
-    SHOW_LOG = 0
+    RSP_ERROR   = -1
+    SHOW_LOG    = 0
+    FLUSH_LOG   = 1
+    SRVR_LOG    = 2
     
-    logger = None
+    logger = logging.getLogger('cloudCS.common')
         
     def __init__(self, msg_type=None, msg_nv=None, msg=None, handler=None):
         self.handler = handler
@@ -128,7 +154,7 @@ class BaseMsg:
                        'msg_type': msg_type,
                        'data': msg_nv
             }
-        BaseMsg.logger.debug('received msg_type: %d, data[%s]' % (self.nv['msg_type'], str(self.nv['data'])))
+        self.logger.debug('received msg_type: %d, data[%s]' % (self.nv['msg_type'], str(self.nv['data'])))
 
     def msg_type(self):
         return self.nv['msg_type']
@@ -146,7 +172,8 @@ class BaseMsg:
         }
         if sock == None:
             sock = self.handler
-        sock.write_message(resp_nv, False)
+        if sock != None:
+            sock.write_message(resp_nv, False)
 
     def reply(self, response, sock=None):
         resp_nv = {
@@ -155,7 +182,8 @@ class BaseMsg:
         }
         if sock == None:
             sock = self.handler
-        sock.write_message(resp_nv, False)
+        if sock != None:
+            sock.write_message(resp_nv, False)
 
     def reply_async(self, response):
         ioloop = tornado.ioloop.IOLoop.instance()
@@ -167,13 +195,57 @@ class BaseMsg:
 
 
 class WebSocketLogger(logging.Handler):
+    logger = logging.getLogger('cloudCS.common')
+    
     def __init__(self, dest=None):
         logging.Handler.__init__(self)
         self.dest = dest
+        self.tee_dest = None
         self.level = logging.DEBUG
+        self.last_message = None
+
+    def tee(self, io):
+        self.tee_dest = io
+
+    def attach(self, dest):
+        self.logger.debug("reattaching WebSocketLogger to " + str(dest))
+        self.dest = dest
+        if None != self.last_message:
+            self.logger.debug("sending last_message: " + str(self.last_message))
+            self._write_message(self.last_message) 
+
+    def detach(self):
+        self.dest = None
 
     def flush(self):
-        pass
+        super(WebSocketLogger, self).flush()
+        if self.tee_dest != None:
+            self.tee_dest.flush()            
+
+    def close(self):
+        super(WebSocketLogger, self).close()
+        
+        if None != self.tee_dest:
+            self.tee_dest.close()
+            self.tee_dest = None
+            
+        if None != self.dest:
+            self.dest = None
+
+    def _write_message(self, msg_nv):
+        if None != self.dest:
+            self.dest.write_message(msg_nv, False)
+        else:
+            self.last_message = msg_nv
+            
+        msg_type = ""
+        if (msg_nv['msg_type'] == BaseMsg.RSP_ERROR):
+            msg_type = "ERROR: "
+        elif (msg_nv['msg_type'] == BaseMsg.SHOW_LOG):
+            msg_type = "LOG: "
+
+        if None != self.tee_dest:            
+            self.tee_dest.write(msg_type + str(msg_nv['data']) + '\n')
 
     def emit(self, record):
         msg = self.format(record)
@@ -186,14 +258,14 @@ class WebSocketLogger(logging.Handler):
                    'msg_type': BaseMsg.RSP_ERROR,
                    'data': msg
         }
-        self.dest.write_message(resp_nv, False)
+        self._write_message(resp_nv)
 
     def send_log_msg(self, msg):
         resp_nv = {
                    'msg_type': BaseMsg.SHOW_LOG,
                    'data': msg
         }
-        self.dest.write_message(resp_nv, False)
+        self._write_message(resp_nv)
     
     def send_log_msg_async(self, msg):
         ioloop = tornado.ioloop.IOLoop.instance()
@@ -209,7 +281,7 @@ class QueueLogger(logging.Handler):
         self.level = logging.DEBUG
 
     def flush(self):
-        pass
+        self.q.put((BaseMsg.FLUSH_LOG, ""))
 
     def filter_msg(self, msg):
         for pattern in self.filter_strings:
@@ -220,9 +292,12 @@ class QueueLogger(logging.Handler):
         msg = self.format(record)
         msg = msg.strip('\r')
         msg = msg.strip('\n')
-        self.send_log_msg(msg)
+        self.clnt_log(msg)
 
-    def send_log_msg(self, msg):
+    def srvr_log(self, level, msg):
+        self.q.put((BaseMsg.SRVR_LOG, (level, msg)))
+        
+    def clnt_log(self, msg):
         msg = self.filter_msg(msg)
         self.q.put((BaseMsg.SHOW_LOG, msg))
     
@@ -238,8 +313,9 @@ class AsyncRunner(object):
     
     DEFAULT_REPLY = None
     FILTER_STRINGS = []
+    logger = logging.getLogger('cloudCS.runner')
     
-    def __init__(self, wslogger, wsmsg, method, *args):
+    def __init__(self, wslogger, wsmsg, method, client_ctx, *args):
         q = Queue()
         in_msg_type = wsmsg.msg_type()
         
@@ -254,6 +330,7 @@ class AsyncRunner(object):
         self.in_msg_type = in_msg_type
         self.wslogger = wslogger
         self.wsmsg = wsmsg
+        self.client_ctx = client_ctx
         self.p.start()
         self._start_handler(q)
             
@@ -294,8 +371,13 @@ class AsyncRunner(object):
             self.p = None
 
         self.wslogger.send_log_msg("Aborted.")
-        self.wsmsg.reply(AsyncRunner.DEFAULT_REPLY)
+        if None != AsyncRunner.DEFAULT_REPLY:
+            self.wsmsg.reply(AsyncRunner.DEFAULT_REPLY)
         self.completed()
+
+    @abstractmethod
+    def srvr_log(self, level, msg):
+        raise NotImplementedError
 
     @abstractmethod
     def completed(self):
@@ -307,7 +389,11 @@ class AsyncRunner(object):
                 msg_type, msg = self.q.get(False)
                 if msg_type == BaseMsg.SHOW_LOG:
                     self.wslogger.send_log_msg(msg)
-                if msg_type == BaseMsg.RSP_ERROR:
+                elif msg_type == BaseMsg.FLUSH_LOG:
+                    self.wslogger.flush()
+                elif msg_type == BaseMsg.SRVR_LOG:
+                    self.srvr_log(msg[0], msg[1])
+                elif msg_type == BaseMsg.RSP_ERROR:
                     self.wslogger.send_error_msg(msg)
                 elif msg_type == self.in_msg_type:
                     self.results = msg
