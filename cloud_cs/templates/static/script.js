@@ -1,5 +1,6 @@
 // TODO: encapsulate to avoid polluting global namespace
 
+var logout_timer = null;
 var cs_ws_url = '';
 var cs_session = '';
 
@@ -99,9 +100,25 @@ function do_ws(onopen, onmessage, onclose) {
 				else {
 					if (resp.msg_type == ws_msg_types.RSP_AUTH) {
 						ws_conn_authenticated = resp.data.success;
-						if(ws_conn_authenticated && (null != ws_conn_onopen)) ws_conn_onopen();
+						if(!ws_conn_authenticated) {
+							msg = resp.data.msg ? resp.data.msg : 'Your login session appears to have timed out. Please sign in again.';
+							alert_in_page(msg, 'danger');								
+							$('.modal').modal('hide');
+							ws_conn.close();
+							ws_conn = null;
+						}
+						else {
+							if(null != ws_conn_onopen) ws_conn_onopen();
+						}
+						//if(ws_conn_authenticated && (null != ws_conn_onopen)) ws_conn_onopen();
 					}
 				}
+			};
+			
+			ws_conn.onerror = function(evt) {
+				alert_in_page('Server is unreachable. Please retry.', 'danger');								
+				$('.modal').modal('hide');
+				ws_conn = null;				
 			};
 		}
 		else {
@@ -136,7 +153,19 @@ function select_modeling_mode(selVal) {
 	$('.on_modeling_mode').filter($('.on_'+selVal)).show();
 };
 
+function post_logout() {
+	if(!$.cookie("cloudcs_sess")) {
+		$('body').html('<p></p>');					
+	}
+	else {
+		$.removeCookie("cloudcs_sess");
+		document.location.href = "/";
+	}	
+};
+
 function logoff() {
+	if(null != logout_timer) return;
+	
 	do_ws(function() {
 			ws_conn.send(JSON.stringify({
 				'msg_type': ws_msg_types.REQ_LOGOUT,
@@ -145,16 +174,16 @@ function logoff() {
 		},
 		function(resp) {
 			if (resp.msg_type == ws_msg_types.RSP_LOGOUT) {
-				close_ws(true);
-				if(!$.cookie("cloudcs_sess")) {
-					$('body').html('<p></p>');					
-				}
-				else {
-					$.removeCookie("cloudcs_sess");
-					document.location.href = "/";
-				}
+				close_ws(false);
+			}
+			if(null != logout_timer) {
+				clearTimeout(logout_timer);
+				logout_timer = null;
+				post_logout();
 			}
 		}, null);
+		
+		logout_timer = setTimeout(post_logout, 2000);
 };
 
 function check_detached_tasks(fn, if_no_tasks) {

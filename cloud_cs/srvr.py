@@ -1,4 +1,4 @@
-import os, webbrowser, getpass, logging
+import os, webbrowser, getpass, logging, time
 import tornado.web, tornado.ioloop, tornado.websocket, tornado.httpserver
 
 from apiclient.http import HttpError
@@ -137,7 +137,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 sess.detach = True  # set detach mode by default
                 self.work_dir = sess.work_dir()
                 self.storage_creds, self.store = sess.storage()
-            return ({'success': self.is_authenticated}, not self.is_authenticated)
+            return ({'success': self.is_authenticated, 'msg': 'Your login session appears to have timed out. Please sign in again.'}, not self.is_authenticated)
         return (None, not self.is_authenticated)
         
 
