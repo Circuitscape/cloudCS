@@ -1,4 +1,5 @@
 import os, StringIO, time, shutil, logging
+from multiprocessing import Process, Value
 
 from circuitscape.compute import Compute
 from circuitscape.cfg import CSConfig
@@ -8,8 +9,16 @@ from circuitscape import __file__ as cs_pkg_file
 from common import Utils, AsyncRunner
 from cloudstore import GoogleDriveStore
 
+
 class CircuitscapeRunner(AsyncRunner):
+    MAX_PARALLEL = 20
+    
     def __init__(self, wslogger, wsmsg, method, client_ctx, *args):
+        self.logger.debug("Server currently running " + str(self.process_count) + " processes.")
+         
+        if self.process_count >= CircuitscapeRunner.MAX_PARALLEL:
+            raise "Server Overloaded"        
+        
         self.sess = wslogger.dest.sess
         self.run_log = wslogger.tee_dest.name if (None != wslogger.tee_dest) else None
         super(CircuitscapeRunner, self).__init__(wslogger, wsmsg, method, client_ctx, *args)
@@ -52,9 +61,9 @@ class CircuitscapeRunner(AsyncRunner):
             if cfg.parallelize:
                 qlogger.clnt_log("Parallel processes requested: " + (str(cfg.max_parallel) if (cfg.max_parallel > 0) else "maximum"))
                 if cfg.max_parallel == 0:
-                    cfg.max_parallel = 20
+                    cfg.max_parallel = CircuitscapeRunner.MAX_PARALLEL
                 else:
-                    return (False, "Your profile is restricted to a maximum of 20 parallel processors.")
+                    return (False, "Your profile is restricted to a maximum of " + str(CircuitscapeRunner.MAX_PARALLEL) + " parallel processors.")
             
             # check for cumulative maps
             qlogger.clnt_log("Output maps required for - voltage: " + str(cfg.write_volt_maps) + ", current: " + str(cfg.write_cur_maps) + ", cumulative only: " + str(cfg.write_cum_cur_map_only))
@@ -190,6 +199,14 @@ class CircuitscapeRunner(AsyncRunner):
         qlogger.srvr_log(logging.INFO, "end run_verify")
         qlogger.send_result_msg(msg_type, {'complete': True, 'success': testsPassed})
 
+    @staticmethod
+    def _run_compute(configFile, qlogger, prefix, res):
+        qlogger.set_prefix(prefix)
+        cs = Compute(configFile, qlogger)
+        result, solver_failed = cs.compute()
+        qlogger.clnt_log("Result: \n" + str(result))
+        res.value = -1 if solver_failed else 0
+    
 
     @staticmethod
     def run_batch(qlogger, msg_type, roles, msg_data, work_dir, storage_creds, store_in_cloud):
@@ -230,9 +247,15 @@ class CircuitscapeRunner(AsyncRunner):
                     continue
                 config_files.append(os.path.join(root, file_name))
         
-        qlogger.clnt_log("Found " + str(len(config_files)) + " configuration files.")
+        num_configs = len(config_files)
+        qlogger.clnt_log("Found " + str(num_configs) + " configuration files.")
+        parallelize = True if (num_configs > CircuitscapeRunner.MAX_PARALLEL) else False
         
         batch_success = False
+        if parallelize:
+            pool = []
+            results = []
+            
         try:
             for config_file in config_files:
                 root, file_name = os.path.split(config_file)
@@ -242,6 +265,10 @@ class CircuitscapeRunner(AsyncRunner):
          
                 os.chdir(root)       
                 qlogger.clnt_log("Verifying configuration...")
+                
+                if parallelize: # switch off parallization of each task if we are parallelizing batch
+                    cfg.parallelize = False
+                    
                 (all_options_valid, message) = cfg.check()
                 #qlogger.clnt_log("Verified configuration with result: " + str(all_options_valid))
                 
@@ -261,7 +288,8 @@ class CircuitscapeRunner(AsyncRunner):
                     num_failed += 1
                 else:
                     solver_failed = True
-                    output_folder = os.path.join(output_root_folder, os.path.splitext(file_name)[0])
+                    cfgname = os.path.splitext(file_name)[0]
+                    output_folder = os.path.join(output_root_folder, cfgname)
                     os.mkdir(output_folder)
                     cfg.output_file = os.path.join(output_folder, os.path.basename(cfg.output_file))
                     
@@ -272,18 +300,45 @@ class CircuitscapeRunner(AsyncRunner):
                         configFile = os.path.join(outdir, 'circuitscape.ini')
                         cfg.write(configFile)
             
-                        cs = Compute(configFile, qlogger)
-                        result, solver_failed = cs.compute()
-                        qlogger.clnt_log("Result: \n" + str(result))
+                        if parallelize:
+                            if len(pool) >= CircuitscapeRunner.MAX_PARALLEL:
+                                p = pool.pop()
+                                p.join()
+                                result = results.pop()
+                                if result.value == 0:
+                                    num_success += 1
+                                else:
+                                    num_failed += 1
+                                    
+                            result = Value('i', -1)
+                            p = Process(target=CircuitscapeRunner._run_compute, args=(configFile, qlogger, cfgname + ' => ', result))
+                            pool.append(p)
+                            results.append(result)
+                            p.start()
+                        else:
+                            cs = Compute(configFile, qlogger)
+                            result, solver_failed = cs.compute()
+                            qlogger.clnt_log("Result: \n" + str(result))
                     except Exception as e:
                         message = str(e)
                         qlogger.send_error_msg(message)
                     
-                    if solver_failed:
-                        num_failed += 1
-                    else:
-                        num_success += 1
+                    if not parallelize:
+                        if solver_failed:
+                            num_failed += 1
+                        else:
+                            num_success += 1
 
+            if parallelize:
+                qlogger.srvr_log(logging.DEBUG, "waiting for pracesses len=" + str(len(pool)))
+                for idx in range(0, len(pool)):
+                    pool[idx].join()
+                    if results[idx].value == 0:
+                        num_success += 1
+                    else:
+                        num_failed += 1
+                
+            qlogger.srvr_log(logging.DEBUG, "Batch run done for " + str(len(config_files)) + " configuration files. Success: " + str(num_success) + ". Failures: " + str(num_failed))    
             qlogger.clnt_log("Batch run done for " + str(len(config_files)) + " configuration files. Success: " + str(num_success) + ". Failures: " + str(num_failed))
             
             if num_success > 0:

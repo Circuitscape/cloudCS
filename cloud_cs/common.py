@@ -1,5 +1,5 @@
 import traceback, tempfile, os, hashlib, pickle, zipfile, json, logging, signal, time
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue #Manager
 from abc import ABCMeta, abstractmethod
 
 import tornado.web, tornado.ioloop
@@ -279,6 +279,10 @@ class QueueLogger(logging.Handler):
         self.q = q
         self.filter_strings = filter_strings
         self.level = logging.DEBUG
+        self.prefix = ""
+
+    def set_prefix(self, prefix):
+        self.prefix = prefix
 
     def flush(self):
         self.q.put((BaseMsg.FLUSH_LOG, ""))
@@ -295,10 +299,14 @@ class QueueLogger(logging.Handler):
         self.clnt_log(msg)
 
     def srvr_log(self, level, msg):
+        if len(self.prefix) > 0:
+            msg = self.prefix + msg        
         self.q.put((BaseMsg.SRVR_LOG, (level, msg)))
         
     def clnt_log(self, msg):
         msg = self.filter_msg(msg)
+        if len(self.prefix) > 0:
+            msg = self.prefix + msg
         self.q.put((BaseMsg.SHOW_LOG, msg))
     
     def send_result_msg(self, msg_type, ret):
@@ -306,6 +314,8 @@ class QueueLogger(logging.Handler):
 
     def send_error_msg(self, msg):
         msg = self.filter_msg(msg)
+        if len(self.prefix) > 0:
+            msg = self.prefix + msg        
         self.q.put((BaseMsg.RSP_ERROR, msg))
 
 class AsyncRunner(object):
@@ -314,8 +324,12 @@ class AsyncRunner(object):
     DEFAULT_REPLY = None
     FILTER_STRINGS = []
     logger = logging.getLogger('cloudCS.runner')
+    # TODO: process_count is not unified. This should be shared across processes to take care of sub-processes
+    process_count = 0
+    #manager = Manager()
     
     def __init__(self, wslogger, wsmsg, method, client_ctx, *args):
+        #q = self.manager.Queue()
         q = Queue()
         in_msg_type = wsmsg.msg_type()
         
@@ -333,8 +347,9 @@ class AsyncRunner(object):
         self.client_ctx = client_ctx
         self.p.start()
         self._start_handler(q)
-            
+
     def _start_handler(self, q):
+        self.process_count += 1
         if hasattr(q, '_reader'):
             # use the reader fd to hook into ioloop
             self.fd = q._reader.fileno()
@@ -345,6 +360,7 @@ class AsyncRunner(object):
             self.timer.start()
 
     def _stop_handler(self):
+        self.process_count -= 1
         if hasattr(self, 'timer'):
             if self.timer != None:
                 self.timer.stop()
