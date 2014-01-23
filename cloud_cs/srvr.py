@@ -353,7 +353,7 @@ class IndexPageHandler(PageHandlerBase):
 
 
     def get_error_html(self, status_code, **kwargs):
-        return self.generic_write_error(status_code, message="Error serving your request.")
+        return self.generic_get_error_html(status_code, message="Error serving your request.")
 
 
 class Application(tornado.web.Application):
@@ -388,18 +388,20 @@ class Application(tornado.web.Application):
     @staticmethod
     def check_sess_and_task_timeouts():
         global logger
-        logger.debug("checking task timeouts")
+        #logger.debug("checking task timeouts")
         num_timeouts = Session.check_task_timeouts()
-        logger.debug("timed out " + str(num_timeouts) + " tasks")
+        if num_timeouts > 0:
+            logger.debug("timed out " + str(num_timeouts) + " tasks")
         
-        logger.debug("checking session timeouts")
+        #logger.debug("checking session timeouts")
         num_timeouts = Session.check_session_timeouts()
-        logger.debug("timed out " + str(num_timeouts) + " sessions")
+        if num_timeouts > 0:
+            logger.debug("timed out " + str(num_timeouts) + " sessions")
 
 
     def start_session_and_task_monitor(self):
         # start the session and task timeout monitor
-        self.timer = tornado.ioloop.PeriodicCallback(Application.check_sess_and_task_timeouts, 1000*60*10)
+        self.timer = tornado.ioloop.PeriodicCallback(Application.check_sess_and_task_timeouts, 1000*60*30)
         self.timer.start()
         
 def stop_webserver(from_signal=False):

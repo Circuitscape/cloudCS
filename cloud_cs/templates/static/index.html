@@ -116,15 +116,30 @@
 		================================================== -->
 		<!-- Placed at the end of the document so the pages load faster -->
 		<script src="/ext/jquery-1.10.2.js" type="text/javascript"></script>
+		<script src="/ext/jquery-migrate-1.2.1.js" type="text/javascript"></script>
 		<script src="/ext/jquery.cookie.js" type="text/javascript"></script>
 		<script src="/ext/bootstrap/js/bootstrap.min.js" type="text/javascript"></script>
 	
 		<script type="text/javascript">
 			$(document).ready(function() {
+				$.browser.chrome = /chrom(e|ium)/.test(navigator.userAgent.toLowerCase());
+				var ver = parseInt($.browser.version);
+				var supported_browser = ( 	($.browser.mozilla && (ver >= 11)) ||
+											($.browser.chrome && (ver >= 16)) ||
+											($.browser.safari && (ver >= 6)) );
+					
 				$('#btn_login').click(function(e){
+					if(!supported_browser) {
+						alert("browser:" + JSON.stringify( $.browser));
+						alert("You seem to be using an older or unsuported browser which may not be compatible with cloudCS. Please upgrade your browser if you face any issues.");							
+					}
 					document.location.href = "/auth/login";
 				});
-				
+
+				login_pop_content = '<p>Circuitscape Cloud uses Google for authentication and cloud storage.</p><p>On your first use, you may be prompted once to log in and once more to authorize Google Drive access for Circuitscape.</p>';
+				if(!supported_browser) {
+					login_pop_content = login_pop_content + '<p>Mozilla 11, Chrome 16 and Safari 6 are the mimimum supported browser versions.</p>';
+				}
 				if(!$.cookie("cloudcs_sess")) {
 					$('#btn_login').popover({
 						'placement': 'bottom',
@@ -132,8 +147,8 @@
 						'delay': 100,
 						'html': true,
 						'template': '<div class="popover" style="width: 300px"><div class="arrow"></div><div class="popover-inner"><h3 class="popover-title"></h3><div class="popover-content"><p></p></div></div></div>',
-						'content': '<p>Circuitscape Cloud uses Google for authentication and cloud storage.</p><p>On your first use, you may be prompted once to log in and once more to authorize Google Drive access for Circuitscape.</p>'
-					});					
+						'content': login_pop_content
+					});
 				}
 			});
 		</script>

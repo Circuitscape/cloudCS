@@ -330,7 +330,7 @@ class CircuitscapeRunner(AsyncRunner):
                             num_success += 1
 
             if parallelize:
-                qlogger.srvr_log(logging.DEBUG, "waiting for pracesses len=" + str(len(pool)))
+                qlogger.srvr_log(logging.DEBUG, "waiting for processes len=" + str(len(pool)))
                 for idx in range(0, len(pool)):
                     pool[idx].join()
                     if results[idx].value == 0:
