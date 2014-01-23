@@ -72,9 +72,9 @@ class CircuitscapeRunner(AsyncRunner):
             
             # check problem size
             prob_sz = CSIO.problem_size(cfg.data_type, cfg.habitat_file)
-            qlogger.clnt_log("Habitat size: " + str(prob_sz))
+            qlogger.clnt_log("Landscape size: " + str(prob_sz))
             if prob_sz > 24000000:
-                return (False, "Your profile is restricted for habitat sizes of 24m nodes only.")
+                return (False, "Your profile is restricted for landscape sizes of 24m nodes only.")
         except Exception as e:
             return (False, "Unknown error verifying limits. (" + str(e) + "). Please check your input files.")
         
