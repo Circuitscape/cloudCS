@@ -1,5 +1,7 @@
-import os, webbrowser, getpass, logging, time
-import tornado.web, tornado.ioloop, tornado.websocket, tornado.httpserver
+import os, webbrowser, getpass, logging
+import tornado.web, tornado.ioloop, tornado.httpserver
+#import tornado.websocket 
+import sockjs.tornado
 
 from apiclient.http import HttpError
 
@@ -15,6 +17,7 @@ from cloudstore import GoogleDriveHandler as StorageHandler
 from runner import CircuitscapeRunner
 
 SRVR_CFG = None
+websock_router = None
 
 class WSMsg(BaseMsg):
     REQ_AUTH = 1000
@@ -54,8 +57,8 @@ class WSMsg(BaseMsg):
     RSP_LAST_RUN_LOG = 122
 
 
-class WebSocketHandler(tornado.websocket.WebSocketHandler):    
-    def open(self):
+class WebSocketHandler(sockjs.tornado.SockJSConnection):    
+    def on_open(self, info):
         global logger
         self.is_authenticated = False
         if not SRVR_CFG.multiuser:
@@ -137,7 +140,10 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 sess.detach = True  # set detach mode by default
                 self.work_dir = sess.work_dir()
                 self.storage_creds, self.store = sess.storage()
-            return ({'success': self.is_authenticated, 'msg': 'Your login session appears to have timed out. Please sign in again.'}, not self.is_authenticated)
+                msg = None
+            else:
+                msg = 'Your login session appears to have timed out. Please sign in again.'
+            return ({'success': self.is_authenticated, 'msg': msg}, not self.is_authenticated)
         return (None, not self.is_authenticated)
         
 
@@ -200,7 +206,7 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
         try:
             for line in run_log.readlines():
                 resp_nv['data'] = line.rstrip()
-                self.write_message(resp_nv, False)
+                self.send(resp_nv, False)
             success = True
         finally:
             run_log.close()
@@ -358,17 +364,18 @@ class IndexPageHandler(PageHandlerBase):
 
 class Application(tornado.web.Application):
     def __init__(self):
-        global SRVR_CFG
+        global SRVR_CFG, websock_router
         pkgpath, _fname = os.path.split(__file__)
         templates_path = os.path.join(pkgpath, 'templates')
         static_path = os.path.join(pkgpath, 'templates/static')
         ext_path = os.path.join(pkgpath, 'ext')
+        
+        websock_router = sockjs.tornado.SockJSRouter(WebSocketHandler, ServerConfig.SERVER_WS_PATH)
         handlers = [
             (r'/', IndexPageHandler),
-            (ServerConfig.SERVER_WS_PATH, WebSocketHandler),
             (r'/static/(.*)', tornado.web.StaticFileHandler, {'path': static_path}),
             (r'/ext/(.*)', tornado.web.StaticFileHandler, {'path': ext_path})
-        ]
+        ] + websock_router.urls
         
         if SRVR_CFG.multiuser:
             Session.srvr_cfg = SRVR_CFG
@@ -397,7 +404,8 @@ class Application(tornado.web.Application):
         num_timeouts = Session.check_session_timeouts()
         if num_timeouts > 0:
             logger.debug("timed out " + str(num_timeouts) + " sessions")
-
+        
+        logger.debug("websock stats: " + str(websock_router.stats.dump()))
 
     def start_session_and_task_monitor(self):
         # start the session and task timeout monitor

@@ -20,5 +20,6 @@ setup(
         'circuitscape >= 3.8.0',
         'tornado >= 3.1.1',
         'google-api-python-client',
+        'sockjs-tornado'
     ],
 )

@@ -10,7 +10,6 @@ class Session:
     cookie_name = "cloudcs_sess"
 
     def auth_valid(self, req):
-        self.local_work_dir = None
         logger.info("authenticated " + self.user_id())
         if not self.cfg().is_user_allowed(self.user_id()):
             raise RuntimeError("user not authorized")
@@ -41,8 +40,9 @@ class Session:
             
     def remove_temporary_files(self):
         outdir = self.local_work_dir
-        Utils.rmdir(outdir)
-        logger.debug("removed temporary folder " + outdir)
+        if None != outdir:
+            Utils.rmdir(outdir)
+            logger.debug("removed temporary folder " + outdir)
 
     @staticmethod
     def extract_session_id(req):

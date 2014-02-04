@@ -173,7 +173,7 @@ class BaseMsg:
         if sock == None:
             sock = self.handler
         if sock != None:
-            sock.write_message(resp_nv, False)
+            sock.send(resp_nv, False)
 
     def reply(self, response, sock=None):
         resp_nv = {
@@ -183,7 +183,7 @@ class BaseMsg:
         if sock == None:
             sock = self.handler
         if sock != None:
-            sock.write_message(resp_nv, False)
+            sock.send(resp_nv, False)
 
     def reply_async(self, response):
         ioloop = tornado.ioloop.IOLoop.instance()
@@ -234,7 +234,7 @@ class WebSocketLogger(logging.Handler):
 
     def _write_message(self, msg_nv):
         if None != self.dest:
-            self.dest.write_message(msg_nv, False)
+            self.dest.send(msg_nv, False)
         else:
             self.last_message = msg_nv
             
