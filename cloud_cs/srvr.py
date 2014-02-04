@@ -57,28 +57,33 @@ class WSMsg(BaseMsg):
     RSP_LAST_RUN_LOG = 122
 
 
-class WebSocketHandler(sockjs.tornado.SockJSConnection):    
+class WebSocketHandler(sockjs.tornado.SockJSConnection):
+    def log_str(self):
+        return self.sess.log_str() if (None != self.sess) else ''
+        
     def on_open(self, info):
         global logger
         self.is_authenticated = False
         if not SRVR_CFG.multiuser:
             self.sess = SessionStandalone(getpass.getuser())
-        logger.debug("websocket connection opened")
+        else:
+            self.sess = None
+        logger.debug("%s websocket connection opened", self.log_str())
 
     def on_close(self):
         global logger
         self.is_authenticated = False
-        logger.debug("websocket connection closed")
+        logger.debug("%s websocket connection closed", self.log_str())
         
         sess = self.sess
         if (sess != None) and (sess.task != None) and sess.detach:
-            logger.debug("detaching task")
+            logger.debug("%s detaching task", self.log_str())
             self.sess.task.detach()
 
     def logout_or_detach(self):
         sess = self.sess
         if SRVR_CFG.multiuser and (sess != None):
-            logger.debug("in logout_or_detach detach=" + str(sess.detach) + " task:" + str(sess.task == None))
+            logger.debug("%s in logout_or_detach detach=%s task: %s", self.log_str(), str(sess.detach), str(sess.task == None))
             if (not sess.detach) or (sess.task == None):
                 sess.logout()
                 self.sess = None
@@ -89,6 +94,7 @@ class WebSocketHandler(sockjs.tornado.SockJSConnection):
         #logger.debug("got request url " + self.request.full_url())
         #logger.debug("websocket message received [%s]"%(str(message),))
         wsmsg = WSMsg(msg=message, handler=self)
+        logger.debug('%s received msg_type: %d, data[%s]', self.log_str(), wsmsg.nv['msg_type'], str(wsmsg.nv['data']))
         is_shutdown_msg = False
         response = {}
         try:
@@ -119,10 +125,10 @@ class WebSocketHandler(sockjs.tornado.SockJSConnection):
                     response, is_shutdown_msg = self.handle_last_run_log(wsmsg)
 
             if response != None:
-                logger.debug("responding with message: " + str(response))
+                logger.debug("%s responding with message: %s", self.log_str(), str(response))
                 wsmsg.reply(response)
         except Exception:
-            logger.exception("Exception handling message of type %d"%(wsmsg.msg_type(),))
+            logger.exception("%s Exception handling message of type %d", self.log_str(), wsmsg.msg_type())
             wsmsg.error(-1)
             
         if is_shutdown_msg:
@@ -153,11 +159,11 @@ class WebSocketHandler(sockjs.tornado.SockJSConnection):
         success = False
         try:
             filepath = wsmsg.data('filename')
-            logger.debug("handle_load_config filepath: " + filepath)
+            logger.debug("%s handle_load_config filepath: %s", self.log_str(), filepath)
             if SRVR_CFG.multiuser:
-                logger.debug("translating filepath to local in multiuser mode")
+                logger.debug("%s translating filepath to local in multiuser mode", self.log_str())
                 filepath = self.store.copy_to_local(filepath, self.work_dir)
-            logger.debug("handle_load_config filepath: " + filepath)
+            logger.debug("%s handle_load_config filepath: %s", self.log_str(), filepath)
             
             cfg = CSConfig(filepath)
             
@@ -168,9 +174,9 @@ class WebSocketHandler(sockjs.tornado.SockJSConnection):
                 result = cfg.as_dict(rel_to_abs=filedir)
             success = True
         except Exception as e:
-            logger.exception("Error reading configuration from %s"%(wsmsg.data('filename'),))
+            logger.exception("%s Error reading configuration from %s", self.log_str(), wsmsg.data('filename'))
             result = 'HttpError' if isinstance(e, HttpError) else 'UnknownError'
-        logger.debug("returning config [" + str(result) + "]")
+        logger.debug("%s returning config [%s]", self.log_str(), str(result))
         return ({'cfg': result, 'success': success}, False)
 
 
@@ -245,7 +251,7 @@ class WebSocketHandler(sockjs.tornado.SockJSConnection):
         data = wsmsg.nv['data']
         run_data = data['run_data']
         client_ctx = data['client_ctx']
-        self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, client_ctx, user_role, run_data, work_dir, storage_creds, multiuser)
+        self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_job, client_ctx, user_role, run_data, work_dir, storage_creds, multiuser, self.sess.log_str())
         return (None, False)
 
 
@@ -268,7 +274,7 @@ class WebSocketHandler(sockjs.tornado.SockJSConnection):
         data = wsmsg.nv['data']
         run_data = data['run_data']
         client_ctx = data['client_ctx']
-        self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_batch, client_ctx, user_role, run_data, work_dir, storage_creds, multiuser)
+        self.sess.task = CircuitscapeRunner(wslogger, wsmsg, CircuitscapeRunner.run_batch, client_ctx, user_role, run_data, work_dir, storage_creds, multiuser, self.sess.log_str())
         return (None, False)
 
 

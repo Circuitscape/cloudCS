@@ -14,7 +14,7 @@ class CloudStore:
     __metaclass__ = ABCMeta
     
     @abstractmethod
-    def __init__(self, creds):
+    def __init__(self, creds, log_str):
         raise NotImplementedError
     
     @abstractmethod
@@ -41,18 +41,18 @@ class StorageHandlerBase(PageHandlerBase):
             # try to retrieve storage authorization from database
             credentials = Utils.retrieve_storage_creds(StorageHandlerBase.SEC_SALT, uid)
         if None != credentials:
-            logger.debug("retrieved stashed credentials")
+            logger.debug("[%s] retrieved stashed credentials", str(uid))
         return (uid, credentials)
         
     def _on_auth(self, uid, creds, store):
         if not creds:
             raise tornado.web.HTTPError(500, "Storage auth failed")
-        logger.debug("storage authenticated for with credentials " + creds.to_json())
         sess_id = Session.extract_session_id(self)
         sess = Session.get_session(sess_id)
+        logger.debug("%s storage authenticated for with credentials %s", sess.log_str(), creds.to_json())
         sess.storage_auth_valid(self, creds, store)
         if uid != None:
-            logger.debug("stashed credentials")
+            logger.debug("%s stashed credentials for %s", sess.log_str(), str(uid))
             Utils.stash_storage_creds(GoogleDriveHandler.SEC_SALT, uid, creds)
 
     def get_error_html(self, status_code, **kwargs):
@@ -60,9 +60,10 @@ class StorageHandlerBase(PageHandlerBase):
 
 
 class GoogleDriveStore(CloudStore):
-    def __init__(self, creds):
+    def __init__(self, creds, log_str=''):
         http = httplib2.Http()
         self.http = creds.authorize(http)
+        self.log_str = log_str
         self.service = build('drive', 'v2', http=http)
     
     def all_to_local(self, workdir):
@@ -78,25 +79,25 @@ class GoogleDriveStore(CloudStore):
         return comps[len(comps)-2]
                 
     def copy_to_local(self, file_id, local_path):
-        logger.debug("got file_id " + str(file_id) + " of type " + str(type(file_id)))
+        logger.debug("%s got file_id %s of type %s", self.log_str, str(file_id), str(type(file_id)))
         if file_id.startswith('gdrive://'):
             file_id = GoogleDriveStore.to_file_id(file_id)
              
         drive_file = self.service.files().get(fileId=file_id).execute()
         download_url = drive_file.get('downloadUrl')
         mime_type = drive_file.get('mimeType')
-        logger.debug("file mime type: " + mime_type)
+        logger.debug("%s file mime type: %s", self.log_str, mime_type)
         if not download_url:
-            logger.debug("looking for exportLinks as downloadUrl was not found")
+            logger.debug("%s looking for exportLinks as downloadUrl was not found", self.log_str)
             export_links = drive_file.get('exportLinks')
             if export_links:
                 download_url = export_links.get('text/plain')
         
         if download_url:
-            logger.debug("downloading " + download_url) 
+            logger.debug("%s downloading %s", self.log_str, download_url) 
             resp, content = self.service._http.request(download_url)
             if resp.status == 200:
-                logger.debug("downdload status " + str(resp.status) + " for " + download_url)
+                logger.debug("%s downdload status %s for %s", self.log_str, str(resp.status), download_url)
                 
                 file_is_binary = (mime_type in ['application/x-gzip', 'application/zip'])
                 file_open_mode = 'wb' if file_is_binary else 'w'
@@ -111,20 +112,20 @@ class GoogleDriveStore(CloudStore):
                 else:
                     local_file = local_path
                 
-                logger.debug("file is binary: " + str(file_is_binary) + ", file_open_mode: " + file_open_mode)
+                logger.debug("%s file is binary: %s, file_open_mode: %s", self.log_str, str(file_is_binary), file_open_mode)
                 with open(local_file, file_open_mode) as f:
                     if not file_is_binary:
                         if content.startswith(codecs.BOM_UTF8):
                             u = content.decode('utf-8-sig')
                             content = u.encode('utf-8')
                     f.write(content)
-                    logger.debug("stored " + download_url + " to " + local_file)
+                    logger.debug("%s stored %s to %s", self.log_str, download_url, local_file)
                 return local_file
             else:
-                logger.error('Error downloading file: %s' % (str(resp),))
+                logger.error("%s Error downloading file: %s", self.log_str, str(resp))
                 return None
         else:
-            logger.error('File empty or not found: %s' % (str(file_id),))
+            logger.error("%s File empty or not found: %s", self.log_str, str(file_id))
             return None        
     
     def copy_to_remote(self, folder_id, local_path, mime_type='text/plain', extract_folder_id=False):
@@ -150,10 +151,10 @@ class GoogleDriveStore(CloudStore):
                     'parents': parents
             }
             uploaded_file = self.service.files().insert(body=body, media_body=media_body).execute()
-            logger.debug("uploaded local file " + local_path + " to gdrive file " + str(uploaded_file))
+            logger.debug("%s uploaded local file %s to gdrive file %s", self.log_str, local_path, str(uploaded_file))
             return uploaded_file['id']
         except:
-            logger.exception("error uploading local file " + local_path + " to gdrive")
+            logger.exception("%s error uploading local file %s to gdrive", self.log_str, local_path)
             return None
 
 
@@ -181,13 +182,13 @@ class GoogleDriveHandler(StorageHandlerBase):
         logger.debug("google drive auth invoked")
         uid, credentials = self._get_stashed_creds()
         if credentials != None:
-            self._on_auth(None, credentials, GoogleDriveStore(credentials))
+            self._on_auth(None, credentials, GoogleDriveStore(credentials, str(uid)))
             return
                     
         flow_id = self.get_argument("state", None)
         if (None != flow_id):
             credentials = yield tornado.gen.Task(self._get_credentials, flow_id)
-            self._on_auth(flow_id, credentials, GoogleDriveStore(credentials))
+            self._on_auth(flow_id, credentials, GoogleDriveStore(credentials, str(uid)))
         else:
             self._get_code(uid)
     

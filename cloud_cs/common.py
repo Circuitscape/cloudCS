@@ -154,7 +154,7 @@ class BaseMsg:
                        'msg_type': msg_type,
                        'data': msg_nv
             }
-        self.logger.debug('received msg_type: %d, data[%s]' % (self.nv['msg_type'], str(self.nv['data'])))
+        #self.logger.debug('received msg_type: %d, data[%s]' % (self.nv['msg_type'], str(self.nv['data'])))
 
     def msg_type(self):
         return self.nv['msg_type']

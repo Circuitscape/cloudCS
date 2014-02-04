@@ -26,27 +26,27 @@ class CircuitscapeRunner(AsyncRunner):
     def completed(self):
         self.wslogger.flush()
         self.sess.task = None
-        self.logger.debug("task completed for session " + self.sess.sess_id)
+        self.logger.debug("%s task completed", self.sess.log_str())
         if self.run_log:
             Utils.stash_last_run_log("", self.sess.user_id(), self.run_log)
-            self.logger.debug("stashed run log " + self.run_log)
+            self.logger.debug("%s stashed run log", self.sess.log_str())
     
     def srvr_log(self, level, msg):
-        self.logger.log(level, str(self.sess.sess_id) + " - " + str(msg))
+        self.logger.log(level, "%s %s", self.sess.log_str(), str(msg))
     
     def attach(self, dest):
         old_sess_id = self.sess.sess_id
         self.wslogger.attach(dest)
         self.sess = dest.sess
         self.wsmsg.handler = dest
-        self.logger.debug("task re-attached to session " + self.sess.sess_id + " from old session " + old_sess_id)
+        self.logger.debug("%s task re-attached from old session %s", self.sess.log_str(), str(old_sess_id))
         
     def detach(self):
         wslogger = self.wslogger
         if (None != wslogger) and (None != wslogger.dest):
             wslogger.detach()
         self.wsmsg.handler = None
-        self.logger.debug("task detached from session " + self.sess.sess_id)
+        self.logger.debug("%s task detached", self.sess.log_str())
     
     #TODO: The hardcoded values for role limits need to be configurable
     @staticmethod
@@ -108,13 +108,13 @@ class CircuitscapeRunner(AsyncRunner):
 
 
     @staticmethod
-    def run_job(qlogger, msg_type, roles, msg_data, work_dir, storage_creds, store_in_cloud):
+    def run_job(qlogger, msg_type, roles, msg_data, work_dir, storage_creds, store_in_cloud, log_str):
         qlogger.srvr_log(logging.INFO, "beginning run_job")
         solver_failed = True
         output_cloud_folder = None
         output_folder = None
         cfg = CSConfig()
-        store = GoogleDriveStore(storage_creds) if (None != storage_creds) else None
+        store = GoogleDriveStore(storage_creds, log_str) if (None != storage_creds) else None
         
         for key in msg_data.keys():
             val = msg_data[key]
@@ -209,10 +209,10 @@ class CircuitscapeRunner(AsyncRunner):
     
 
     @staticmethod
-    def run_batch(qlogger, msg_type, roles, msg_data, work_dir, storage_creds, store_in_cloud):
+    def run_batch(qlogger, msg_type, roles, msg_data, work_dir, storage_creds, store_in_cloud, log_str):
         qlogger.srvr_log(logging.INFO, "beginning run_batch")
         cwd = os.getcwd()
-        store = GoogleDriveStore(storage_creds) if (None != storage_creds) else None
+        store = GoogleDriveStore(storage_creds, log_str) if (None != storage_creds) else None
         
         if store_in_cloud:
             batch_zip = msg_data
