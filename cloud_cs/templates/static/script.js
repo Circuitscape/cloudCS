@@ -3,6 +3,17 @@
 var logout_timer = null;
 var cs_ws_url = '';
 var cs_session = '';
+var ws_protocols = [
+	'websocket', 
+	'xdr-streaming', 
+	'xhr-streaming', 
+	'iframe-eventsource', 
+	'iframe-htmlfile', 
+	'xdr-polling', 
+	'xhr-polling', 
+	'iframe-xhr-polling', 
+	'jsonp-polling'
+	];
 
 // TODO: generate from server side code
 var ws_msg_types = {
@@ -78,7 +89,7 @@ function do_ws(onopen, onmessage, onclose) {
 	if(cs_session != '') {
 		if(null == ws_conn) {
 			var ws_conn_authenticated = false;
-			ws_conn = new WebSocket(cs_ws_url);
+			ws_conn = new SockJS(cs_ws_url, ws_protocols);
 			ws_conn.onopen = function(evt) {
 				ws_conn.send(JSON.stringify({
 					'msg_type': ws_msg_types.REQ_AUTH,
@@ -93,7 +104,8 @@ function do_ws(onopen, onmessage, onclose) {
 			};
 			
 			ws_conn.onmessage = function(evt) {
-				resp = JSON.parse(evt.data);
+				//resp = JSON.parse(evt.data);
+				resp = evt.data;
 				if(ws_conn_authenticated) {
 					if(null != ws_conn_onmessage) ws_conn_onmessage(resp);
 				}
@@ -126,12 +138,13 @@ function do_ws(onopen, onmessage, onclose) {
 		}
 	}
 	else {
-		ws_conn = new WebSocket(cs_ws_url);
+		ws_conn = new SockJS(cs_ws_url, ws_protocols);
 		ws_conn.onopen = function(evt) {
 			ws_conn_onopen();
 		};
 		ws_conn.onmessage = function(evt) {
-			resp = JSON.parse(evt.data);
+			//resp = JSON.parse(evt.data);
+			resp = evt.data;
 			ws_conn_onmessage(resp);
 		};
 	}

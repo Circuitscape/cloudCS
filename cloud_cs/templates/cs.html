@@ -10,7 +10,7 @@
 
 		<title>Circuitscape {%if filedlg_type == "google"%}Cloud{%end%} {{version}}</title>
 
-		<link href="/ext/bootstrap/css/bootstrap.css" rel="stylesheet">
+		<link href="//netdna.bootstrapcdn.com/bootstrap/3.1.0/css/bootstrap.min.css" rel="stylesheet">
 
 		<link href="/static/styles.css" rel="stylesheet">
 		<link href="/static/bootstrap-spinedit.css" rel="stylesheet">
@@ -393,8 +393,8 @@
 					<div class="modal-header">
 						<h3 id="results_div_title">Running Verifications...</h3>
 					</div>
-					<div class="modal-body" style="text-transform: uppercase; color: #BBBBBB; font-weight: bold; font-size: 12px; letter-spacing: 1px;">
-						Execution Logs<br />
+					<div class="modal-body">
+						<span style="text-transform: uppercase; color: #BBBBBB; font-weight: bold; font-size: 12px; letter-spacing: 1px;">Execution Logs</span><br />
 						<textarea id="results_div_msg" class="form-control" rows="10"></textarea>
 					</div>
 					<div class="modal-footer">
@@ -484,9 +484,10 @@
 		<!-- Bootstrap core JavaScript
 		================================================== -->
 		<!-- Placed at the end of the document so the pages load faster -->
-		<script src="/ext/jquery-1.10.2.js" type="text/javascript"></script>
+		<script src="//ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+		<script src="//cdn.sockjs.org/sockjs-0.3.4.min.js"></script>
 		<script src="/ext/jquery.cookie.js" type="text/javascript"></script>
-		<script src="/ext/bootstrap/js/bootstrap.min.js" type="text/javascript"></script>
+		<script src="//netdna.bootstrapcdn.com/bootstrap/3.1.0/js/bootstrap.min.js"></script>
 		<script src="/static/bootstrap-spinedit.js" type="text/javascript"></script>
 		{%if filedlg_type == "google"%}
 		<script type="text/javascript" src="https://apis.google.com/js/api.js" type="text/javascript"></script>

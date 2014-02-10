@@ -29,7 +29,7 @@ class ServerConfig:
             self.user_roles = user_roles
             
         self.http_url = "http://" + self.host + ':' + str(self.port) + '/'
-        self.ws_url = "ws://" + self.host + ':' + str(self.port) + ServerConfig.SERVER_WS_PATH
+        self.ws_url = "http://" + self.host + ':' + str(self.port) + ServerConfig.SERVER_WS_PATH
         self.storage_auth_redirect_uri = "http://" + self.host + ':' + str(self.port) + ServerConfig.SERVER_STORAGE_AUTH_PATH
     
     def is_user_allowed(self, user):
