@@ -11,11 +11,11 @@ class Session:
 
     def auth_valid(self, req):
         logger.info("%s authenticated %s", self.log_str(), str(self.user_id()))
+        self.local_work_dir = None
         if not self.cfg().is_user_allowed(self.user_id()):
             raise RuntimeError("user not authorized")
         logger.debug("%s user %s allowed in role(s) %s", self.log_str(), str(self.user_id()), str(self.user_role()))
         
-        self.local_work_dir = None
         # reattach older session if available
         old_sessions = self.remove_older_sessions()
         self.task = None

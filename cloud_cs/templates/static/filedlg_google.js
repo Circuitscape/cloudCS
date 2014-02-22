@@ -3,6 +3,8 @@ var file_dlg_cwd = '';
 var google_developer_key = '';
 var google_app_id = '';
 var google_user = '';
+var google_oauth_token = '';
+var google_picker_api_loaded = false;
 
 var file_dlg_headers = {
 	'habitat_file_select': "Choose Habitat Map File",
@@ -60,6 +62,7 @@ function file_dlg_init(target_id) {
           .setAppId(google_app_id)
           .addView(view)
           //.addView(new google.picker.View(google.picker.ViewId.FOLDERS))
+          .setOAuthToken(google_oauth_token)
           .setAuthUser(google_user)
           .setDeveloperKey(google_developer_key)
           .setCallback(file_dlg_populate)
@@ -69,9 +72,33 @@ function file_dlg_init(target_id) {
        picker.setVisible(true);       
 };
 
+function on_google_auth_api_load() {
+	window.gapi.auth.authorize({
+		'client_id': google_app_id,
+		'scope': 'https://www.googleapis.com/auth/drive',
+		'immediate': false
+		},
+		on_google_auth_result);
+};
+
+function on_google_picker_api_load() {
+	google_picker_api_loaded = true;
+};
+
+function on_google_auth_result(auth_result) {
+	if (auth_result && !auth_result.error) {
+		google_oauth_token = auth_result.access_token;
+	}
+};
+
+function on_google_api_load() {
+	gapi.load('auth', {'callback': on_google_auth_api_load});
+	gapi.load('picker', {'callback': on_google_picker_api_load});
+};
+
 function file_dlg_init_api(devkey, appid, userhint) {
 	google_developer_key = devkey;
 	google_user = userhint;
 	google_app_id = appid;
-	gapi.load('picker');
+	on_google_api_load();
 };
