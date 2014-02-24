@@ -1,4 +1,4 @@
-import traceback, tempfile, os, hashlib, pickle, zipfile, json, logging, signal, time
+import traceback, tempfile, os, hashlib, pickle, zipfile, json, logging, signal, time, psutil
 from multiprocessing import Process, Queue #Manager
 from abc import ABCMeta, abstractmethod
 from collections import deque
@@ -100,9 +100,19 @@ class Utils:
         filename = os.path.join(Utils.creds_store_path(), uid_hash)
         result = None
         if os.path.exists(filename):
-            with open(filename, 'rb') as f:
-                result = pickle.load(f)
+            st = os.stat(filename)
+            # allow credentials to be used till maximum of a week's time
+            if st.st_mtime >= (time.time() - 60*60*24*7):
+                with open(filename, 'rb') as f:
+                    result = pickle.load(f)
         return result
+    
+    @staticmethod
+    def revoke_storage_creds(sec_salt, uid):
+        uid_hash = Utils.hash(uid, sec_salt)
+        filename = os.path.join(Utils.creds_store_path(), uid_hash)
+        if os.path.exists(filename):
+            os.remove(filename)
     
     @staticmethod
     def run_log_path():
@@ -377,14 +387,26 @@ class AsyncRunner(object):
         self._stop_handler()
         if None != self.p:
             self.wslogger.send_log_msg("Sending terminate request...")
-            self.p.terminate()
-            self.p.join(timeout=5)
-            if self.p.is_alive():
-                self.wslogger.send_log_msg("Sending kill signal...")
-                os.kill(self.p.pid, signal.SIGKILL)
-                self.p.join(timeout=5)
-                if self.p.is_alive():
+            pp = psutil.Process(self.p.pid)
+            cpp = [c for c in pp.get_children(True)]
+            
+            pp.terminate()
+            for child in cpp:
+                child.terminate()
+            
+            try:
+                pp.wait(5)
+            except:            
+                self.wslogger.send_log_msg("Sending the kill signals...")
+                for child in cpp:
+                    if child.is_running():
+                        child.kill()
+                pp.kill()
+                try:
+                    pp.wait(5)
+                except:
                     self.wslogger.send_log_msg("Could not terminate. Abandoning.")
+                    
             self.p = None
 
         self.wslogger.send_log_msg("Aborted.")

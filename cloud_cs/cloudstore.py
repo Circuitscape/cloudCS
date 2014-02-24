@@ -53,7 +53,7 @@ class StorageHandlerBase(PageHandlerBase):
         sess.storage_auth_valid(self, creds, store)
         if uid != None:
             logger.debug("%s stashed credentials for %s", sess.log_str(), str(uid))
-            Utils.stash_storage_creds(GoogleDriveHandler.SEC_SALT, uid, creds)
+            Utils.stash_storage_creds(StorageHandlerBase.SEC_SALT, uid, creds)
 
     def get_error_html(self, status_code, **kwargs):
         return self.generic_get_error_html(status_code, message="Could not authenticate you to cloud storage.")
