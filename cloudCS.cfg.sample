@@ -46,6 +46,9 @@ temp_dir=
 timeout_execution=300
 timeout_session=360
 
+# Number of messages to replay back when a session is rejoined (default 10)
+replay_num_msgs = 10
+
 # Google API keys and secrets
 # These are required to support Google authentication and Google Drive access
 # Can be obtained after registering circuitscape application with Google.

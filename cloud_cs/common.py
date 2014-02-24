@@ -1,6 +1,7 @@
 import traceback, tempfile, os, hashlib, pickle, zipfile, json, logging, signal, time
 from multiprocessing import Process, Queue #Manager
 from abc import ABCMeta, abstractmethod
+from collections import deque
 
 import tornado.web, tornado.ioloop
 
@@ -196,13 +197,14 @@ class BaseMsg:
 
 class WebSocketLogger(logging.Handler):
     logger = logging.getLogger('cloudCS.common')
+    REPLAY_NUM_MSGS = 10
     
     def __init__(self, dest=None):
         logging.Handler.__init__(self)
         self.dest = dest
         self.tee_dest = None
         self.level = logging.DEBUG
-        self.last_message = None
+        self.last_message = deque([], WebSocketLogger.REPLAY_NUM_MSGS)
 
     def tee(self, io):
         self.tee_dest = io
@@ -210,9 +212,9 @@ class WebSocketLogger(logging.Handler):
     def attach(self, dest):
         self.logger.debug("reattaching WebSocketLogger to " + str(dest))
         self.dest = dest
-        if None != self.last_message:
-            self.logger.debug("sending last_message: " + str(self.last_message))
-            self._write_message(self.last_message) 
+        #self.logger.debug("sending last_message: " + str(self.last_message))
+        for msg in self.last_message:
+            self._write_message(msg, True)
 
     def detach(self):
         self.dest = None
@@ -232,20 +234,19 @@ class WebSocketLogger(logging.Handler):
         if None != self.dest:
             self.dest = None
 
-    def _write_message(self, msg_nv):
+    def _write_message(self, msg_nv, duplicate=False):
         if None != self.dest:
             self.dest.send(msg_nv, False)
-        else:
-            self.last_message = msg_nv
             
-        msg_type = ""
-        if (msg_nv['msg_type'] == BaseMsg.RSP_ERROR):
-            msg_type = "ERROR: "
-        elif (msg_nv['msg_type'] == BaseMsg.SHOW_LOG):
-            msg_type = "LOG: "
-
-        if None != self.tee_dest:            
-            self.tee_dest.write(msg_type + str(msg_nv['data']) + '\n')
+        if not duplicate:
+            self.last_message.append(msg_nv)
+            if None != self.tee_dest:
+                msg_type = ""
+                if (msg_nv['msg_type'] == BaseMsg.RSP_ERROR):
+                    msg_type = "ERROR: "
+                elif (msg_nv['msg_type'] == BaseMsg.SHOW_LOG):
+                    msg_type = "LOG: "
+                self.tee_dest.write(msg_type + str(msg_nv['data']) + '\n')
 
     def emit(self, record):
         msg = self.format(record)

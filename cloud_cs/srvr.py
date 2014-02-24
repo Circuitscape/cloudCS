@@ -430,6 +430,7 @@ def run_webgui(config):
     global logger
     SRVR_CFG = ServerConfig(config)
     
+    WebSocketLogger.REPLAY_NUM_MSGS = SRVR_CFG.cfg_get("replay_num_msgs", int, 10)
     Utils.temp_files_root = SRVR_CFG.cfg_get("temp_dir", str, None)
     log_lvl = SRVR_CFG.cfg_get("log_level", str, "DEBUG")
     log_lvl = getattr(logging, log_lvl)
