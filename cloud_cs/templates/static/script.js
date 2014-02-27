@@ -736,7 +736,10 @@ function init_circuitscape(ws_url, sess_id) {
 		$(this).tab('show');
 	});
 	$('.server_file_dlg').click(function(e){
-		file_dlg_init(e.target.id);
+		err = file_dlg_init(e.target.id);
+		if(err) {
+			alert_in_page(err, "danger");
+		}
 	});
 
 	$('#num_parallel_procs').spinedit({

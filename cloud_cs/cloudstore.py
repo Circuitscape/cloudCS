@@ -1,4 +1,4 @@
-import logging, httplib2, os, tempfile, codecs, tornado
+import logging, httplib2, os, tempfile, codecs, tornado, time
 from abc import ABCMeta, abstractmethod
 
 from apiclient.discovery import build
@@ -77,8 +77,21 @@ class GoogleDriveStore(CloudStore):
     def to_file_name(self, file_str):
         comps = file_str.split('/')
         return comps[len(comps)-2]
+
+    def copy_to_local(self, file_id, local_path, attempts=3):
+        ex = None
+        for attempt in range(1, attempts):
+            try:
+                return self._copy_to_local(file_id, local_path)
+            except Exception as e:
+                ex = e
+                logger.warning("%s error downloading file: %s. attempt %d of %d", self.log_str, str(ex), attempt, attempts)
+                if attempt < (attempts-1):
+                    time.sleep(5*attempt)
+        raise ex
+
                 
-    def copy_to_local(self, file_id, local_path):
+    def _copy_to_local(self, file_id, local_path):
         logger.debug("%s got file_id %s of type %s", self.log_str, str(file_id), str(type(file_id)))
         if file_id.startswith('gdrive://'):
             file_id = GoogleDriveStore.to_file_id(file_id)

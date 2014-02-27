@@ -387,25 +387,28 @@ class AsyncRunner(object):
         self._stop_handler()
         if None != self.p:
             self.wslogger.send_log_msg("Sending terminate request...")
-            pp = psutil.Process(self.p.pid)
-            cpp = [c for c in pp.get_children(True)]
-            
-            pp.terminate()
-            for child in cpp:
-                child.terminate()
-            
             try:
-                pp.wait(5)
-            except:            
-                self.wslogger.send_log_msg("Sending the kill signals...")
+                pp = psutil.Process(self.p.pid)
+                cpp = [c for c in pp.get_children(True)]
+                
+                pp.terminate()
                 for child in cpp:
-                    if child.is_running():
-                        child.kill()
-                pp.kill()
+                    child.terminate()
+                
                 try:
                     pp.wait(5)
-                except:
-                    self.wslogger.send_log_msg("Could not terminate. Abandoning.")
+                except:            
+                    self.wslogger.send_log_msg("Sending the kill signals...")
+                    for child in cpp:
+                        if child.is_running():
+                            child.kill()
+                    pp.kill()
+                    try:
+                        pp.wait(5)
+                    except:
+                        self.wslogger.send_log_msg("Could not terminate. Abandoning.")
+            except:
+                self.wslogger.send_log_msg("Task not found. Probably has stopped already.")
                     
             self.p = None
 

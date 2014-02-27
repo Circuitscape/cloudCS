@@ -116,6 +116,7 @@ class CircuitscapeRunner(AsyncRunner):
         cfg = CSConfig()
         store = GoogleDriveStore(storage_creds, log_str) if (None != storage_creds) else None
         
+        all_options_valid = True
         for key in msg_data.keys():
             val = msg_data[key]
             if store_in_cloud and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
@@ -135,10 +136,16 @@ class CircuitscapeRunner(AsyncRunner):
                         # copy the file locally
                         qlogger.clnt_log("Reading from cloud store: " + val)
                         val = store.copy_to_local(val, work_dir)
+                elif (len(val) > 0):
+                    message = "Configuration parameter %s must have a gdrive URL as value. Current value: '%s'"%(key, val)
+                    all_options_valid = False
+                    break
+                    
             cfg.__setattr__(key, val)
         
-        qlogger.clnt_log("Verifying configuration...")
-        (all_options_valid, message) = cfg.check()
+        if all_options_valid:
+            qlogger.clnt_log("Verifying configuration...")
+            (all_options_valid, message) = cfg.check()
         
         if all_options_valid:
             qlogger.clnt_log("Verifying profile limits...")

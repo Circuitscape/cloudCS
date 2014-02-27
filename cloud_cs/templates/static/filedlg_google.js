@@ -47,16 +47,20 @@ function file_dlg_populate(data) {
 };
       
 function file_dlg_init(target_id) {
+	if(google_oauth_token == '') {
+		return "You are not authenticated to Google Drive yet. Please configure your browser to allow popups for this site, and login again.";
+	} 
+	
 	file_dlg_result_target = target_id.substring(0, target_id.lastIndexOf('_'));
 	$('#'+file_dlg_result_target).val('');
 	
 	var view = new google.picker.DocsView(google.picker.ViewId.FOLDERS);
-      view.setMode(google.picker.DocsViewMode.LIST);
-      if(file_dlg_types[target_id] == 'application/vnd.google-apps.folder') {
-	      view.setSelectFolderEnabled(true);
-	      view.setMimeTypes('application/vnd.google-apps.folder');      	
-      }
-      var picker = new google.picker.PickerBuilder()
+	view.setMode(google.picker.DocsViewMode.LIST);
+	if(file_dlg_types[target_id] == 'application/vnd.google-apps.folder') {
+		view.setSelectFolderEnabled(true);
+		view.setMimeTypes('application/vnd.google-apps.folder');      	
+	}
+	var picker = new google.picker.PickerBuilder()
           .enableFeature(google.picker.Feature.NAV_HIDDEN)
           .disableFeature(google.picker.Feature.MULTISELECT_ENABLED)
           .setAppId(google_app_id)
@@ -69,7 +73,7 @@ function file_dlg_init(target_id) {
           .setSize(800,400)
           .setTitle(file_dlg_headers[target_id])
           .build();
-       picker.setVisible(true);       
+	picker.setVisible(true);
 };
 
 function on_google_auth_api_load() {
