@@ -121,6 +121,8 @@ class CircuitscapeRunner(AsyncRunner):
             val = msg_data[key]
             if store_in_cloud and (key in CSConfig.FILE_PATH_PROPS) and (val != None):
                 # if val is gdrive location, translate it to local drive
+                if isinstance(val, str) or isinstance(val, unicode):
+                    val = val.strip()
                 if val.startswith("gdrive://"):
                     if key == 'output_file':
                         # store the output gdrive folder
@@ -138,6 +140,10 @@ class CircuitscapeRunner(AsyncRunner):
                         val = store.copy_to_local(val, work_dir)
                 elif (len(val) > 0):
                     message = "Configuration parameter %s must have a gdrive URL as value. Current value: '%s'"%(key, val)
+                    all_options_valid = False
+                    break
+                elif key == 'output_file':
+                    message = "Output location not specified."
                     all_options_valid = False
                     break
                     
